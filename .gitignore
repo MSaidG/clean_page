@@ -1,2 +1,6 @@
-todo.txt
-            
+todo*
+.clang*
+CMakeUserPresets.json
+sdl_api.cpp
+build/
+references*
