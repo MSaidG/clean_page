@@ -63,7 +63,7 @@ struct Entity {
     Vec2         move_direction {};
     SDL_FRect    rect { .x {}, .y {}, .w {}, .h {} };
     Vec2         position {};
-    float        speed { 100.0f };
+    float        speed { 400.0f };
 };
 
 void createEntity(Entity& entity, const char* textureFileName, Vec2 position);
@@ -83,7 +83,7 @@ int main(int argc, char* argv[])
     createEntity(player, "hey.png", Vec2 { 0.0f, 0.0f });
 
     Entity object;
-    createEntity(object, "red_circle.png", Vec2 { 500.0f, -100.0f });
+    createEntity(object, "hey.png", Vec2 { 500.0f, -100.0f });
 
     Uint64   last         = SDL_GetPerformanceCounter();
     uint64_t freq         = SDL_GetPerformanceFrequency();
@@ -151,9 +151,6 @@ int main(int argc, char* argv[])
 
         if (is_in_camera(camera, object)) {
             // Convert world → screen coordinates
-
-
-
             SDL_FRect screenRect {
                 object.rect.x - camera.x,
                 object.rect.y - camera.y,
@@ -162,6 +159,7 @@ int main(int argc, char* argv[])
             };
             
             SDL_Log("%s", "RENDER OBJECT!");
+            SDL_RenderClear(m_renderer);
             SDL_RenderTexture(m_renderer, object.texture, nullptr, &screenRect);
         }
 
@@ -184,6 +182,11 @@ int main(int argc, char* argv[])
         // SDL_Log("DST X: %f, DST Y: %f", player.rect.x, player.rect.y);
     }
 
+
+    SDL_DestroyTexture(player.texture);
+    SDL_DestroyTexture(object.texture);
+    SDL_DestroyWindow(m_window);
+    SDL_DestroyRenderer(m_renderer);
     SDL_Quit();
     return 0;
 }
@@ -340,9 +343,8 @@ void sdl_init()
         SDL_Log("RENDERER PROPERTIES: %d", prop);
     }
 
-    SDL_Log("VSYNC: %s", SDL_GetStringProperty(prop, SDL_PROP_RENDERER_VSYNC_NUMBER, ""));
-    SDL_SetStringProperty(prop, SDL_PROP_RENDERER_VSYNC_NUMBER, "1");
-    SDL_Log("VSYNC: %s", SDL_GetStringProperty(prop, SDL_PROP_RENDERER_VSYNC_NUMBER, ""));
+
+    SDL_SetRenderVSync(m_renderer, 0);
 }
 
 void get_error()
