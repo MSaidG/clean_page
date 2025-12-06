@@ -148,7 +148,8 @@ int main(int argc, char* argv[])
         // MOVE PLAYER
         player.position.x += player.move_direction.x * player.speed * dt;
         player.position.y += player.move_direction.y * player.speed * dt;
-
+        
+        SDL_RenderClear(m_renderer);
         if (is_in_camera(camera, object)) {
             // Convert world → screen coordinates
             SDL_FRect screenRect {
@@ -159,13 +160,13 @@ int main(int argc, char* argv[])
             };
             
             SDL_Log("%s", "RENDER OBJECT!");
-            SDL_RenderClear(m_renderer);
             SDL_RenderTexture(m_renderer, object.texture, nullptr, &screenRect);
         }
 
         // RENDER TOP
         SDL_SetRenderDrawColor(m_renderer, 100, 20, 20, 255);
         SDL_RenderFillRect(m_renderer, &topRect);
+        SDL_SetRenderDrawColor(m_renderer, 50, 20, 20, 255);
 
         // RENDER PLAYER
         SDL_RenderTexture(m_renderer, player.texture, nullptr, &player.rect); //&player.rect
@@ -197,10 +198,10 @@ bool is_in_camera(const SDL_FRect& cam, const Entity& obj)
     SDL_Log("Object X, Y: %f, %f ", obj.position.x, obj.position.y);
 
     return !(
-        obj.position.x + obj.rect.w < cam.x || // object is left of camera
-        obj.position.x > cam.x + cam.w || // object is right of camera
-        obj.position.y + obj.rect.h < cam.y || // object is above camera
-        obj.position.y > cam.y + cam.h // object is below camera
+        obj.position.x + obj.rect.w  < cam.x || // object is left of camera
+        obj.position.x - obj.rect.h > cam.x + cam.w || // object is right of camera
+        obj.position.y + obj.rect.h  < cam.y || // object is above camera
+        obj.position.y - obj.rect.h > cam.y + cam.h // object is below camera
     );
 }
 
