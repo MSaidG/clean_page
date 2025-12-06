@@ -4,3 +4,4 @@ CMakeUserPresets.json
 sdl_api.cpp
 build/
 references*
+hot_reload_example
