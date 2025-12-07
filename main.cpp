@@ -26,8 +26,13 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+
+// #include <flecs.h>
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#include <entt/entt.hpp>
 
 constexpr int WINDOW_WIDTH { 800 };
 constexpr int WINDOW_HEIGHT { 600 };
@@ -73,7 +78,7 @@ bool is_in_camera(const SDL_FRect& cam, const Entity& obj);
 int main(int argc, char* argv[])
 {
     // SDL_FRect playerDst { .x = m_current_window_width / 2.0f, .y = m_current_window_height / 2.0f, .w = player.rect.w, .h = player.rect.h };
-
+    
     sdl_init();
 
     SDL_FRect camera { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
@@ -148,7 +153,7 @@ int main(int argc, char* argv[])
         // MOVE PLAYER
         player.position.x += player.move_direction.x * player.speed * dt;
         player.position.y += player.move_direction.y * player.speed * dt;
-        
+
         SDL_RenderClear(m_renderer);
         if (is_in_camera(camera, object)) {
             // Convert world → screen coordinates
@@ -158,7 +163,7 @@ int main(int argc, char* argv[])
                 object.rect.w,
                 object.rect.h
             };
-            
+
             SDL_Log("%s", "RENDER OBJECT!");
             SDL_RenderTexture(m_renderer, object.texture, nullptr, &screenRect);
         }
@@ -183,7 +188,6 @@ int main(int argc, char* argv[])
         // SDL_Log("DST X: %f, DST Y: %f", player.rect.x, player.rect.y);
     }
 
-
     SDL_DestroyTexture(player.texture);
     SDL_DestroyTexture(object.texture);
     SDL_DestroyWindow(m_window);
@@ -198,9 +202,9 @@ bool is_in_camera(const SDL_FRect& cam, const Entity& obj)
     SDL_Log("Object X, Y: %f, %f ", obj.position.x, obj.position.y);
 
     return !(
-        obj.position.x + obj.rect.w  < cam.x || // object is left of camera
+        obj.position.x + obj.rect.w < cam.x || // object is left of camera
         obj.position.x - obj.rect.h > cam.x + cam.w || // object is right of camera
-        obj.position.y + obj.rect.h  < cam.y || // object is above camera
+        obj.position.y + obj.rect.h < cam.y || // object is above camera
         obj.position.y - obj.rect.h > cam.y + cam.h // object is below camera
     );
 }
@@ -210,8 +214,8 @@ void createEntity(Entity& entity, const char* textureFileName, Vec2 position)
     int texture_width {};
     int texture_height {};
     createTexture(&entity.texture, texture_width, texture_height, textureFileName);
-    entity.rect.x = position.x - texture_width / 2.0f;
-    entity.rect.y = position.y - texture_height / 2.0f;
+    entity.rect.x   = position.x - texture_width / 2.0f;
+    entity.rect.y   = position.y - texture_height / 2.0f;
     entity.rect.h   = static_cast<float>(texture_height);
     entity.rect.w   = static_cast<float>(texture_width);
     entity.position = position;
@@ -344,7 +348,6 @@ void sdl_init()
         SDL_Log("RENDERER PROPERTIES: %d", prop);
     }
 
-
     SDL_SetRenderVSync(m_renderer, 0);
 }
 
@@ -360,7 +363,8 @@ void set_app_metadata()
             "Clear Page")) {
         get_error();
     }
-    if (!SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game")) {
+    if (!SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING,
+            "game")) {
         get_error();
     }
     if (!SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING,

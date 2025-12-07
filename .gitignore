@@ -5,3 +5,4 @@ sdl_api.cpp
 build/
 references*
 hot_reload_example
+cmake_build
