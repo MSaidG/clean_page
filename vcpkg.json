@@ -1,6 +1,7 @@
 {
   "dependencies": [
+    "flecs",
     "sdl3",
-    "entt"
+    "sdl3-ttf"
   ]
 }

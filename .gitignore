@@ -6,3 +6,5 @@ build/
 references*
 hot_reload_example
 cmake_build
+entt_summary.txt
+docs
