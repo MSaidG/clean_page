@@ -9,7 +9,7 @@
 #include <thread>
 #include <unordered_map>
 
-constexpr int PORT = 7777;
+constexpr int PORT = 7776;
 
 class GameServer {
 public:

@@ -11,21 +11,26 @@ class GameClient {
 public:
     void init();
     void run();
+    void connect();
+    void poll_loop();
     void shutdown();
     void disconnect_from_server();
+    void send_data(const void* data, uint32 data_size, int k_n_flag);
     bool m_is_connected { false };
+
 
 private:
     static GameClient* m_instance;
 
-    HSteamNetConnection      m_net_connection;
     ISteamNetworkingSockets* m_sockets;
+    HSteamNetConnection      m_net_connection;
 
     std::jthread            m_threadUserInput;
     std::queue<std::string> m_queueUserInput;
     std::atomic<bool>       m_is_quitting { false };
     std::mutex              m_mutexUserInputQueue;
 
+    void send_string_data(std::string_view msg);
     void poll_incoming_messages();
     void poll_local_user_input();
     void local_user_input_init();

@@ -23,7 +23,7 @@
 #include <SDL3/SDL_video.h>
 
 #include <SDL3_ttf/SDL_ttf.h>
-#include <cstddef>
+#include <cstring>
 #include <flecs.h>
 
 #include <flecs/addons/cpp/c_types.hpp>
@@ -35,10 +35,11 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <string>
+#include <steam/steamnetworkingtypes.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "game_client.h"
+#include "net_messages.h"
 #include "stb_image.h"
 
 #define FLECS_CPP
@@ -56,62 +57,11 @@ void poll_keyboard_state_entity(flecs::entity player);
 
 SDL_Window*   m_window {};
 SDL_Renderer* m_renderer {};
-TTF_Font*     m_font        = nullptr;
-GameClient   m_game_client;
+TTF_Font*     m_font = nullptr;
+GameClient    m_game_client;
 
 int m_current_window_width  = WINDOW_WIDTH;
 int m_current_window_height = WINDOW_HEIGHT;
-
-struct Vec2 {
-    float x {};
-    float y {};
-};
-
-struct Position {
-    float x {};
-    float y {};
-};
-
-struct Velocity {
-    float x {};
-    float y {};
-};
-
-struct Direction {
-    float x {};
-    float y {};
-};
-
-struct Speed {
-    float speed {};
-};
-
-struct Texture {
-    SDL_Texture* texture {};
-
-    // ~Texture()
-    // {
-    //     if (texture)
-    //         SDL_DestroyTexture(texture);
-    // }
-};
-
-struct RectF {
-    SDL_FRect rect {};
-};
-
-struct PlayerTag { };
-struct LocalPlayer { };
-struct PlayerId {
-    int playerId {};
-};
-
-struct Camera {
-    float x {};
-    float y {};
-    float w {};
-    float h {};
-};
 
 template <typename T>
 T normalize_vector(T vec);
@@ -135,6 +85,7 @@ bool         is_in_camera_view(const Camera& cam, const Position objPosition, co
 bool         load_font();
 SDL_Texture* get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
 void         render_font(const char* message, float rect_x, float rect_y);
+void         send_direction_data_to_server(Direction dir);
 
 int main(int argc, char* argv[])
 {
@@ -276,7 +227,7 @@ int main(int argc, char* argv[])
                 case SDLK_F2: {
                     std::cout << m_game_client.m_is_connected << "\n";
                     if (!m_game_client.m_is_connected)
-                        m_game_client.run();
+                        m_game_client.connect();
                     else
                         m_game_client.disconnect_from_server();
                 }
@@ -504,8 +455,27 @@ void poll_keyboard_state_entity(flecs::entity player)
     dir = normalize_vector(dir);
     // SDL_Log("MOVE DIR X: %f", dir.x);
     // SDL_Log("MOVE DIR Y: %f", dir.y);
-
     player.set<Direction>(dir);
+
+    dir.x *= player.get<Speed>().speed;
+    dir.y *= player.get<Speed>().speed;
+    send_direction_data_to_server(dir);
+}
+
+void send_direction_data_to_server(Direction dir)
+{
+    if ((dir.x || dir.y) && m_game_client.m_is_connected) {
+        MsgHeader header;
+        header.type = MsgType::Direction;
+        header.size = sizeof(Direction);
+
+        uint8_t buffer[sizeof(MsgHeader) + sizeof(Direction)];
+        memcpy(buffer, &header, sizeof(header));
+        memcpy(buffer + sizeof(header), &dir, sizeof(dir));
+
+        m_game_client.send_data(&buffer, sizeof(buffer),
+            k_nSteamNetworkingSend_Unreliable);
+    }
 }
 
 template <typename T>

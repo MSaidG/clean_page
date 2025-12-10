@@ -1,8 +1,11 @@
 #include "game_server.h"
+#include "net_messages.h"
 #include "network_utils.h"
 
 #include <assert.h>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <format>
 #include <iostream>
 #include <stdarg.h>
@@ -168,20 +171,62 @@ void GameServer::poll_incoming_messages()
             break;
         if (num_msgs < 0)
             fatal_error("Error checking for messages!");
-
         assert(num_msgs == 1 && msg);
 
         auto it_client = m_map_clients.find(msg->m_conn);
         assert(it_client != m_map_clients.end());
 
-        std::string cmd(reinterpret_cast<const char*>(msg->m_pData), msg->m_cbSize);
+        int   size = msg->m_cbSize;
+        void* data = msg->m_pData;
+
+        if (size < sizeof(MsgHeader)) {
+            msg->Release();
+            fatal_error("Invalid packet (too small)\n");
+        }
+
+        MsgHeader header;
+        memcpy(&header, data, sizeof(header));
+
+        if (size < sizeof(MsgHeader) + header.size) {
+            msg->Release();
+            fatal_error("Malformed packet (wrong size)\n");
+        }
+
+        uint8_t* payload = (uint8_t*)data + sizeof(MsgHeader);
+
+        switch (header.type) {
+        case MsgType::Direction: {
+            if (header.size != sizeof(Direction)) {
+                printt("Invalid dir packet size\n");
+                break;
+            }
+
+            Direction dir;
+            memcpy(&dir, payload, sizeof(dir));
+
+            printt("Direction x=%f y=%f\n", dir.x, dir.y);
+        } break;
+
+        case MsgType::ChatMessage: {
+            std::string text((char*)payload, header.size);
+            std::string outgoing_msg = std::format("{}: {}",
+                it_client->second.nick, text);
+            send_message_to_all_clients(outgoing_msg, it_client->first);
+            std::cout << "user_msg: " << outgoing_msg << "\n"; // DEBUG_PRINT
+
+        }
+
+        break;
+
+        default:
+            printt("Unknown message type\n");
+        }
+
+        // std::string cmd(reinterpret_cast<const char*>(msg->m_pData), msg->m_cbSize);
         msg->Release();
 
-        std::string outgoing_msg = std::format("{}: {}", it_client->second.nick, cmd);
+        // std::cout << "user_msg: " << outgoing_msg << "\n"; // DEBUG_PRINT
 
-        std::cout << "user_msg: " << outgoing_msg << "\n"; // DEBUG_PRINT
-
-        send_message_to_all_clients(outgoing_msg, it_client->first);
     }
 }
 

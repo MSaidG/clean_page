@@ -1,17 +1,18 @@
-
+#include "game_client.h"
+#include "net_messages.h"
+#include "network_utils.h"
 
 #include <cassert>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <steam/isteamnetworkingsockets.h>
 #include <steam/isteamnetworkingutils.h>
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingtypes.h>
+#include <steam/steamtypes.h>
 #include <string_view>
 #include <thread>
-
-#include "game_client.h"
-#include "network_utils.h"
 
 namespace {
 SteamNetworkingMicroseconds g_logTimeZero;
@@ -19,9 +20,25 @@ SteamNetworkingMicroseconds g_logTimeZero;
 
 void GameClient::run()
 {
+    init();
+    connect();
+    poll_loop();
+}
 
-    // init();
+void GameClient::poll_loop()
+{
+    while (!m_is_quitting) {
+        poll_incoming_messages();
+        poll_connection_state_changes();
+        poll_local_user_input();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
 
+    shutdown();
+}
+
+void GameClient::connect()
+{
     m_sockets = SteamNetworkingSockets();
     if (m_sockets == nullptr) {
         fatal_error("Failed to create net socket.");
@@ -32,7 +49,7 @@ void GameClient::run()
     SteamNetworkingIPAddr server_addr;
     server_addr.Clear();
 
-    if (!server_addr.ParseString("127.0.0.1:7777")) {
+    if (!server_addr.ParseString("127.0.0.1:7776")) {
         fatal_error("Invalid server adress.");
     }
 
@@ -50,25 +67,17 @@ void GameClient::run()
     }
 
     m_is_connected = true;
-
-    // while (!m_is_quitting) {
-        // poll_incoming_messages();
-        // poll_connection_state_changes();
-        // poll_local_user_input();
-        // std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    // }
-
-    // shutdown();
 }
 
-void GameClient::disconnect_from_server() {
+void GameClient::disconnect_from_server()
+{
 
     if (m_net_connection != k_HSteamNetConnection_Invalid) {
         m_sockets->CloseConnection(m_net_connection, 0, nullptr, false);
         m_net_connection = k_HSteamNetConnection_Invalid;
     }
     m_is_connected = false;
-    m_is_quitting = true;
+    m_is_quitting  = true;
     // GameNetworkingSockets_Kill();
 }
 
@@ -80,7 +89,7 @@ void GameClient::shutdown()
         m_net_connection = k_HSteamNetConnection_Invalid;
     }
     m_is_connected = false;
-    m_is_quitting = true;
+    m_is_quitting  = true;
     GameNetworkingSockets_Kill();
     nuke_process(0);
 }
@@ -131,9 +140,33 @@ void GameClient::poll_local_user_input()
             break;
         }
 
-        m_sockets->SendMessageToConnection(m_net_connection, input.data(),
-            input.size(), k_nSteamNetworkingSend_Reliable, nullptr);
+        // m_sockets->SendMessageToConnection(m_net_connection, input.data(),
+            // input.size(), k_nSteamNetworkingSend_Reliable, nullptr);
+
+        send_string_data(input);
     }
+}
+
+void GameClient::send_string_data(std::string_view msg)
+{
+    MsgHeader header;
+    header.type = MsgType::ChatMessage;
+    header.size = static_cast<uint32_t>(msg.size()); 
+
+    std::vector<uint8_t> buffer(sizeof(MsgHeader) + msg.size());
+
+    memcpy(buffer.data(), &header, sizeof(MsgHeader));
+    memcpy(buffer.data() + sizeof(MsgHeader), msg.data(), msg.size());
+
+    m_sockets->SendMessageToConnection(m_net_connection, buffer.data(),
+        buffer.size(), k_nSteamNetworkingSend_Reliable,
+        nullptr);
+}
+
+void GameClient::send_data(const void* data, uint32 data_size, int k_n_flag)
+{
+    m_sockets->SendMessageToConnection(m_net_connection, data,
+        data_size, k_n_flag, nullptr);
 }
 
 void GameClient::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t* p_info)

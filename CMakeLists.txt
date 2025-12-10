@@ -21,7 +21,7 @@ find_package(GameNetworkingSockets CONFIG REQUIRED)
 add_executable(page main.cpp game_client.cpp network_utils.cpp)
 
 add_executable(server game_server.cpp network_utils.cpp)
-# add_executable(client game_client.cpp network_utils.cpp)
+add_executable(client chat_main.cpp game_client.cpp network_utils.cpp)
 
 if(TARGET flecs::flecs)
     target_link_libraries(
@@ -47,7 +47,7 @@ target_link_libraries(
     GameNetworkingSockets::static
 )
 
-# target_link_libraries(
-#     client PRIVATE
-#     GameNetworkingSockets::static
-# )
+target_link_libraries(
+    client PRIVATE
+    GameNetworkingSockets::static
+)
