@@ -38,6 +38,7 @@
 #include <string>
 
 #define STB_IMAGE_IMPLEMENTATION
+#include "game_client.h"
 #include "stb_image.h"
 
 #define FLECS_CPP
@@ -55,7 +56,8 @@ void poll_keyboard_state_entity(flecs::entity player);
 
 SDL_Window*   m_window {};
 SDL_Renderer* m_renderer {};
-TTF_Font*     m_font = nullptr;
+TTF_Font*     m_font        = nullptr;
+GameClient   m_game_client;
 
 int m_current_window_width  = WINDOW_WIDTH;
 int m_current_window_height = WINDOW_HEIGHT;
@@ -137,6 +139,7 @@ void         render_font(const char* message, float rect_x, float rect_y);
 int main(int argc, char* argv[])
 {
     sdl_init();
+    m_game_client.init();
     SDL_FRect camera { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
 
     flecs::world ecs;
@@ -154,7 +157,7 @@ int main(int argc, char* argv[])
             cam = { player_pos.x - m_current_window_width * 0.5f, player_pos.y - m_current_window_height * 0.5f,
                 static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
             camera_entity.set<Camera>(cam);
-            SDL_Log("Cam X, Cam Y: %f, %f", player_pos.x - m_current_window_width / 2.0f, player_pos.y - m_current_window_height / 2.0f);
+            // SDL_Log("Cam X, Cam Y: %f, %f", player_pos.x - m_current_window_width / 2.0f, player_pos.y - m_current_window_height / 2.0f);
         });
 
     ecs.system<Position, Direction, Speed, RectF, Texture>()
@@ -174,8 +177,8 @@ int main(int argc, char* argv[])
             if (is_in_camera_view(cam, p, r.rect.w, r.rect.h)) {
                 // Convert world => screen space
 
-                float scaleX = (float)m_current_window_width / cam.w;
-                float scaleY = (float)m_current_window_height / cam.h;
+                float     scaleX = (float)m_current_window_width / cam.w;
+                float     scaleY = (float)m_current_window_height / cam.h;
                 SDL_FRect screenRect {
                     (r.rect.x - cam.x) * scaleX,
                     (r.rect.y - cam.y) * scaleY,
@@ -270,6 +273,14 @@ int main(int argc, char* argv[])
                     break;
                 }
 
+                case SDLK_F2: {
+                    std::cout << m_game_client.m_is_connected << "\n";
+                    if (!m_game_client.m_is_connected)
+                        m_game_client.run();
+                    else
+                        m_game_client.disconnect_from_server();
+                }
+
                 default: {
                     break;
                 }
@@ -319,6 +330,8 @@ int main(int argc, char* argv[])
         SDL_GL_UnloadLibrary();
     }
     SDL_Quit();
+
+    m_game_client.shutdown();
     return 0;
 }
 
