@@ -105,21 +105,23 @@ int main(int argc, char* argv[])
 
     m_game_client.init();
     m_game_client.on_player_joined = [&](uint32_t id, Position pos) {
+        std::cout << "Getting joining ...\n";
         auto player = create_player_entity(ecs, id, "hey.png", pos, 1000, false);
         m_players_by_id.insert_or_assign(id, player);
-        std::cout << "Player " << id << " joined.\n";   
+        std::cout << "Player " << id << " joined.\n";
     };
 
     m_game_client.on_player_left = [&](uint32_t id) {
-        std::cout << "Player " << id << " leaving.\n";   
+        std::cout << "Player " << id << " leaving.\n";
         auto player = m_players_by_id[id];
         SDL_DestroyTexture(player.get_mut<Texture>().texture);
         player.destruct();
         m_players_by_id.erase(id);
-        std::cout << "Player " << id << " left.\n";   
+        std::cout << "Player " << id << " left.\n";
     };
 
     m_game_client.on_player_id_assigned = [&](uint32_t id) {
+        std::cout << "Player id assigning ...\n";
         auto local_player_entity = ecs.lookup("LocalPlayer");
         std::cout << "Player id: " << local_player_entity.get<PlayerId>().playerId << "\n";
         local_player_entity.assign<PlayerId>({ id });
@@ -135,6 +137,16 @@ int main(int argc, char* argv[])
             pos.y - r.rect.h * 0.5f,
             r.rect.w,
             r.rect.h });
+    };
+
+    m_game_client.on_players_initial_state_sent = [&](uint32_t count, Client clients[8]) {
+        std::cout << "Getting initial state ...\n";
+        for (int i = 0; i < count; ++i) {
+            std::cout << "Getting player " << clients[i].id << "\n";
+            auto player = create_player_entity(ecs, clients[i].id, "hey.png", clients[i].pos, 1000, false);
+            m_players_by_id.insert_or_assign(clients[i].id, player);
+            std::cout << "Player " << clients[i].id << " in the server.\n";
+        }
     };
 
     SDL_FRect camera { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
@@ -189,7 +201,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            if (e.has<LocalPlayer>()) { 
+            if (e.has<LocalPlayer>()) {
                 SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
             }
 
@@ -273,9 +285,16 @@ int main(int argc, char* argv[])
                         MsgPlayerLeft msg;
                         msg.id = player_entity.get<PlayerId>().playerId;
                         send_data(msg, k_nSteamNetworkingSend_Reliable);
-                        m_players_by_id.clear();
 
                         m_game_client.disconnect_from_server();
+
+                        for (const auto& [count, entity] : m_players_by_id) {
+                            if (!entity.has<LocalPlayer>()) {
+                                SDL_DestroyTexture(entity.get<Texture>().texture);
+                                entity.destruct();
+                            }
+                        }
+                        m_players_by_id.clear();
                     }
                 }
 

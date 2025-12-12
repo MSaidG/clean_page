@@ -2,6 +2,7 @@
 #include <SDL3/SDL_rect.h>
 #include <SDL3/SDL_render.h>
 #include <cstdint>
+#include <string>
 
 
 template<typename T>
@@ -16,6 +17,7 @@ enum class MsgType : uint8_t {
     MsgPlayerLeft = 6,
     MsgPlayerIdAssign = 7,
     MsgPlayerPositionChanged = 8,
+    MsgInitialState = 9,
     // Add more types here
 };
 
@@ -89,6 +91,15 @@ struct Camera {
 #pragma pack(pop)
 
 #pragma pack(push, 1)
+struct Client {
+    char nick[32];
+    uint32_t id;
+    Position pos;
+};
+#pragma pack(pop)
+
+
+#pragma pack(push, 1)
 struct MsgPlayerJoined {
     uint32_t id;
     Position position;
@@ -111,6 +122,14 @@ struct MsgPlayerIdAssign {
 struct MsgPlayerPositionChanged {
     uint32_t id;
     Position position;
+};
+#pragma pack(pop)
+
+
+#pragma pack(push, 1)
+struct MsgInitialState {
+    uint32_t count;
+    Client clients[8];
 };
 #pragma pack(pop)
 
@@ -148,4 +167,9 @@ struct MsgTraits<MsgPlayerPositionChanged> {
 template <>
 struct MsgTraits<MsgPlayerIdAssign> {
     static constexpr MsgType type = MsgType::MsgPlayerIdAssign;
+};
+
+template <>
+struct MsgTraits<MsgInitialState> {
+    static constexpr MsgType type = MsgType::MsgInitialState;
 };

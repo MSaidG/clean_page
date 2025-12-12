@@ -1,5 +1,6 @@
 #pragma once
 
+#include "net_messages.h"
 #include <atomic>
 #include <mutex>
 #include <queue>
@@ -16,10 +17,6 @@ public:
     void run();
 
 private:
-    struct Client {
-        std::string nick;
-        uint32_t id;
-    };
 
     std::unordered_map<HSteamNetConnection, Client> m_map_clients;
 

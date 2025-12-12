@@ -18,6 +18,7 @@
 #include <steam/steamnetworkingsockets.h>
 #include <steam/steamnetworkingtypes.h>
 #include <steam/steamtypes.h>
+#include <sys/types.h>
 #include <thread>
 
 #ifdef _WIN32
@@ -34,7 +35,6 @@ uint32_t                    next_player_id = 1;
 void GameServer::run()
 {
     init();
-
     // ISteamNetworkingSockets* pInterface = SteamNetworkingSockets();
     m_sockets = SteamNetworkingSockets();
 
@@ -61,7 +61,7 @@ void GameServer::run()
         poll_incoming_messages();
         poll_connection_state_changes();
         poll_local_user_input();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     shutdown_server();
@@ -191,7 +191,7 @@ void GameServer::send_data(HSteamNetConnection conn, const T data, uint32 data_s
     MsgHeader header;
     header.type = MsgTraits<T>::type;
     header.size = sizeof(T);
-    
+
     uint8_t buffer[sizeof(MsgHeader) + sizeof(T)];
     memcpy(buffer, &header, sizeof(header));
     memcpy(buffer + sizeof(header), &data, sizeof(data));
@@ -208,7 +208,7 @@ void GameServer::poll_local_user_input()
 
         std::string_view input { cmd };
 
-        if (input == "/quit") {
+        if (input == "/quit" || input == "clear") {
             m_is_quitting = true;
             printt("Shutting down server.");
             break;
@@ -283,6 +283,7 @@ void GameServer::poll_incoming_messages()
 
             Position pos;
             memcpy(&pos, payload, sizeof(pos));
+            it_client->second.pos = pos;
 
             MsgPlayerPositionChanged position_changed_msg { it_client->second.id, pos };
             send_data_to_all_clients(position_changed_msg, it_client->first);
@@ -296,9 +297,26 @@ void GameServer::poll_incoming_messages()
                 break;
             }
 
+            MsgInitialState snap;
+            snap.count = 0;
+            for (const auto& [conn, client] : m_map_clients) {
+                if (conn != msg->m_conn) {
+                    Client player;
+                    
+                    memcpy(player.nick, client.nick, sizeof(player.nick));
+                    player.id = client.id;
+                    player.pos = client.pos;
+
+                    snap.clients[snap.count++] = player;
+                }
+            }
+            send_data(msg->m_conn, snap, sizeof(snap),
+                k_nSteamNetworkingSend_Reliable);
+
+
             MsgPlayerJoined joined_msg;
             memcpy(&joined_msg, payload, sizeof(joined_msg));
-            joined_msg.id = next_player_id;
+            joined_msg.id        = next_player_id;
             it_client->second.id = next_player_id;
 
             MsgPlayerIdAssign assigned_id { next_player_id };
@@ -309,6 +327,8 @@ void GameServer::poll_incoming_messages()
                 k_nSteamNetworkingSend_Reliable);
             printt("Player '%d' joined x=%f y=%f\n",
                 joined_msg.id, joined_msg.position.x, joined_msg.position.y);
+
+
 
             ++next_player_id;
         } break;
@@ -379,14 +399,24 @@ bool GameServer::is_all_reliable_messages_sent(ISteamNetworkingSockets* sockets,
     return true;
 }
 
+void copy_string_view_to_char32(char (&dest)[32], std::string_view src) {
+    size_t n = std::min(src.size(), sizeof(dest) - 1);
+    memcpy(dest, src.data(), n);
+    dest[n] = '\0'; // ensure null-termination
+}
+
 void GameServer::set_client_nick(HSteamNetConnection hConn, std::string_view nick)
 {
     // Update the client's nick in the map
-    m_map_clients[hConn].nick = std::string(nick);
+    copy_string_view_to_char32(m_map_clients[hConn].nick, nick);
+    // m_map_clients[hConn].nick = std::string(nick);
 
     // Also set the connection name for debugging
     m_sockets->SetConnectionName(hConn, nick.data());
 }
+
+
+
 
 void GameServer::on_net_connection_status_changed(SteamNetConnectionStatusChangedCallback_t* pInfo)
 {

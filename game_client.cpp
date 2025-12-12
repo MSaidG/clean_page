@@ -227,6 +227,18 @@ void GameClient::parse_incoming_messages()
         //     position_changed_msg.id, position_changed_msg.position.x, position_changed_msg.position.y);
     } break;
 
+    case MsgType::MsgInitialState: {
+        if (header.size != sizeof(MsgInitialState)) {
+            printt("Client received Invalid MsgInitialState packet size\n");
+            break;
+        }
+
+        MsgInitialState position_changed_msg;
+        memcpy(&position_changed_msg, payload, sizeof(position_changed_msg));
+        on_players_initial_state_sent(position_changed_msg.count, position_changed_msg.clients);
+
+    } break;
+
     default:
         printt("Client received Unknown message type\n");
     }
