@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <iostream>
 #include <steam/isteamnetworkingsockets.h>
 #include <steam/isteamnetworkingutils.h>
 #include <steam/steamnetworkingsockets.h>
@@ -73,7 +74,7 @@ void GameClient::disconnect_from_server()
 {
 
     if (m_net_connection != k_HSteamNetConnection_Invalid) {
-        m_sockets->CloseConnection(m_net_connection, 0, nullptr, false);
+        m_sockets->CloseConnection(m_net_connection, 0, "Client disconnecting.", true);
         m_net_connection = k_HSteamNetConnection_Invalid;
     }
     m_is_connected = false;
@@ -112,6 +113,130 @@ void GameClient::poll_incoming_messages()
     }
 }
 
+void GameClient::parse_incoming_messages()
+{
+    ISteamNetworkingMessage* msg      = nullptr;
+    int                      num_msgs = m_sockets->ReceiveMessagesOnConnection(m_net_connection, &msg, 1);
+    if (num_msgs == 0)
+        return;
+    if (num_msgs < 0)
+        fatal_error("Client received Error checking messages.");
+
+    int   size = msg->m_cbSize;
+    void* data = msg->m_pData;
+
+    if (size < sizeof(MsgHeader)) {
+        msg->Release();
+        fatal_error("Client received Invalid packet (too small)\n");
+    }
+
+    MsgHeader header;
+    memcpy(&header, data, sizeof(header));
+
+    if (size < sizeof(MsgHeader) + header.size) {
+        msg->Release();
+        printt("Conn: %u\n", msg->m_conn);
+        printt("Header type: %d\n", header.type);
+        printt("Client received Malformed packet (wrong size)\n");
+        return;
+    }
+
+    uint8_t* payload = (uint8_t*)data + sizeof(MsgHeader);
+
+    switch (header.type) {
+    case MsgType::Direction: {
+        if (header.size != sizeof(Direction)) {
+            printt("Client received Invalid Direction packet size\n");
+            break;
+        }
+
+        Direction dir;
+        memcpy(&dir, payload, sizeof(dir));
+        // printt("Direction x=%f y=%f\n", dir.x, dir.y);
+    } break;
+
+    case MsgType::ChatMessage: {
+        std::string text((char*)payload, header.size);
+        std::cout << "user_msg: " << text << "\n"; // DEBUG_PRINT
+
+    } break;
+
+    case MsgType::Position: {
+        if (header.size != sizeof(Position)) {
+            printt("Client received Invalid Position packet size\n");
+            break;
+        }
+
+        Position pos;
+        memcpy(&pos, payload, sizeof(pos));
+        printt("Position x=%f y=%f\n", pos.x, pos.y);
+
+    } break;
+
+    case MsgType::MsgPlayerJoined: {
+        if (header.size != sizeof(MsgPlayerJoined)) {
+            printt("Client received Invalid MsgPlayerJoined packet size\n");
+            break;
+        }
+
+        MsgPlayerJoined joined_msg;
+        memcpy(&joined_msg, payload, sizeof(joined_msg));
+        on_player_joined(joined_msg.id, joined_msg.position);
+
+        printt("Player '%d' joined x=%f y=%f\n",
+            joined_msg.id, joined_msg.position.x, joined_msg.position.x);
+    } break;
+
+    case MsgType::MsgPlayerLeft: {
+        if (header.size != sizeof(MsgPlayerLeft)) {
+            printt("Client received Invalid MsgPlayerLeft packet size\n");
+            break;
+        }
+
+        MsgPlayerLeft left_msg;
+        memcpy(&left_msg, payload, sizeof(left_msg));
+        on_player_left(left_msg.id);
+
+        printt("Player '%d' left.\n", left_msg.id);
+    } break;
+
+    case MsgType::MsgPlayerIdAssign: {
+        if (header.size != sizeof(MsgPlayerIdAssign)) {
+            printt("Client received Invalid MsgPlayerIdAssign packet size\n");
+            break;
+        }
+
+        MsgPlayerIdAssign id_assign_msg;
+        memcpy(&id_assign_msg, payload, sizeof(id_assign_msg));
+        on_player_id_assigned(id_assign_msg.id);
+
+        printt("Player assigned id '%d'.\n", id_assign_msg.id);
+    } break;
+
+    case MsgType::MsgPlayerPositionChanged: {
+        if (header.size != sizeof(MsgPlayerPositionChanged)) {
+            printt("Client received Invalid MsgPlayerPositionChanged packet size\n");
+            break;
+        }
+
+        MsgPlayerPositionChanged position_changed_msg;
+        memcpy(&position_changed_msg, payload, sizeof(position_changed_msg));
+        on_player_position_changed(position_changed_msg.id, position_changed_msg.position);
+
+        // printt("Player '%d' position changed x: '%f' y: '%f'.\n",
+        //     position_changed_msg.id, position_changed_msg.position.x, position_changed_msg.position.y);
+    } break;
+
+    default:
+        printt("Client received Unknown message type\n");
+    }
+
+    // fwrite(msg->m_pData, 1, msg->m_cbSize, stdout);
+    // fputc('\n', stdout);
+
+    msg->Release();
+}
+
 void GameClient::init()
 {
     SteamDatagramErrMsg errMsg;
@@ -141,17 +266,17 @@ void GameClient::poll_local_user_input()
         }
 
         // m_sockets->SendMessageToConnection(m_net_connection, input.data(),
-            // input.size(), k_nSteamNetworkingSend_Reliable, nullptr);
+        // input.size(), k_nSteamNetworkingSend_Reliable, nullptr);
 
-        send_string_data(input);
+        send_string_data_to_server(input);
     }
 }
 
-void GameClient::send_string_data(std::string_view msg)
+void GameClient::send_string_data_to_server(std::string_view msg)
 {
     MsgHeader header;
     header.type = MsgType::ChatMessage;
-    header.size = static_cast<uint32_t>(msg.size()); 
+    header.size = static_cast<uint32_t>(msg.size());
 
     std::vector<uint8_t> buffer(sizeof(MsgHeader) + msg.size());
 

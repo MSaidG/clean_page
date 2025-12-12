@@ -69,6 +69,9 @@ T normalize_vector(T vec);
 template <typename T>
 float get_vector_length(T vec);
 
+template <typename T>
+void send_data(T data, const int k_n_flag);
+
 struct Player {
     SDL_Texture* texture {};
     Direction    move_direction {};
@@ -77,24 +80,66 @@ struct Player {
     float        speed { 400.0f };
 };
 
-void         createPlayer(Player& entity, const char* textureFileName, Position position);
-void         poll_keyboard_state(Player& player);
-bool         is_in_camera(const SDL_FRect& cam, const Player& obj);
-void         create_player_entity(flecs::world ecs, int id, const char* texture_file_name, Position position, float speed, bool isLocal);
-bool         is_in_camera_view(const Camera& cam, const Position objPosition, const float objWidth, const float objHeight);
-bool         load_font();
-SDL_Texture* get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
-void         render_font(const char* message, float rect_x, float rect_y);
-void         send_direction_data_to_server(Direction dir);
+SDL_Texture*  get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
+flecs::entity create_player_entity(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, bool isLocal);
+
+void createPlayer(Player& entity, const char* textureFileName, Position position);
+void poll_keyboard_state(Player& player);
+bool is_in_camera(const SDL_FRect& cam, const Player& obj);
+bool is_in_camera_view(const Camera& cam, const Position objPosition, const float objWidth, const float objHeight);
+bool load_font();
+void render_font(const char* message, float rect_x, float rect_y);
+void send_direction_and_position_data_to_server(Direction dir, Position pos);
+void remove_player(uint32_t id);
+
+std::unordered_map<uint32, flecs::entity> m_players_by_id;
 
 int main(int argc, char* argv[])
 {
     sdl_init();
+    flecs::world ecs;
+    create_player_entity(ecs, 1, "hey.png", Position { 0.0f, 0.0f }, 1000.0f, true);
+    // create_player_entity(ecs, 2, "circle.png", Position { 100.0f, 0.0f }, 0.0f, false);
+    // create_player_entity(ecs, 3, "green_circle.png", Position { 300.0f, 0.0f }, 0.0f, false);
+    // create_player_entity(ecs, 2, "hey.png", Position { 100.0f, 0.0f }, 0.0f, false);
+
     m_game_client.init();
+    m_game_client.on_player_joined = [&](uint32_t id, Position pos) {
+        auto player = create_player_entity(ecs, id, "hey.png", pos, 1000, false);
+        m_players_by_id.insert_or_assign(id, player);
+        std::cout << "Player " << id << " joined.\n";   
+    };
+
+    m_game_client.on_player_left = [&](uint32_t id) {
+        std::cout << "Player " << id << " leaving.\n";   
+        auto player = m_players_by_id[id];
+        SDL_DestroyTexture(player.get_mut<Texture>().texture);
+        player.destruct();
+        m_players_by_id.erase(id);
+        std::cout << "Player " << id << " left.\n";   
+    };
+
+    m_game_client.on_player_id_assigned = [&](uint32_t id) {
+        auto local_player_entity = ecs.lookup("LocalPlayer");
+        std::cout << "Player id: " << local_player_entity.get<PlayerId>().playerId << "\n";
+        local_player_entity.assign<PlayerId>({ id });
+        std::cout << "New Player id: " << local_player_entity.get<PlayerId>().playerId << "\n";
+        m_players_by_id.insert_or_assign(id, local_player_entity);
+    };
+
+    m_game_client.on_player_position_changed = [&](uint32_t id, Position pos) {
+        auto player = m_players_by_id[id];
+        player.assign<Position>({ pos });
+        RectF r = player.get<RectF>();
+        player.assign<RectF>({ pos.x - r.rect.w * 0.5f,
+            pos.y - r.rect.h * 0.5f,
+            r.rect.w,
+            r.rect.h });
+    };
+
     SDL_FRect camera { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
 
-    flecs::world ecs;
-    auto         camera_entity = ecs.entity("Camera").set<Camera>({ 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) });
+    auto camera_entity = ecs.entity("Camera").set<Camera>({ 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) });
 
     // Camera cam = camera_entity.get_mut<Camera>();
     Camera cam { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
@@ -113,16 +158,18 @@ int main(int argc, char* argv[])
 
     ecs.system<Position, Direction, Speed, RectF, Texture>()
         .each([camera_entity](flecs::iter& it, size_t row, Position& p, Direction& d, Speed s, RectF& r, Texture& t) {
-            p.x += d.x * s.speed * it.delta_time();
-            p.y += d.y * s.speed * it.delta_time();
+            flecs::entity e = it.entity(row);
+            if (e.has<LocalPlayer>()) {
+                p.x += d.x * s.speed * it.delta_time();
+                p.y += d.y * s.speed * it.delta_time();
+            }
 
             // SDL_Log("Px: %f DirX: %f RectW: %f RectX: %f", p.x, d.x, r.rect.w, r.rect.x);
             // SDL_Log("Py: %f DirY: %f RectH: %f RectY: %f", p.y, d.y, r.rect.h, r.rect.y);
             // SDL_Log("CamX, CamY: %f, %f", cam.x, cam.y);
 
-            Camera cam = camera_entity.get_mut<Camera>();
-
-            std::string message_to_render = "Px: " + std::to_string(cam.x) + "Py: " + std::to_string(p.y);
+            Camera      cam               = camera_entity.get_mut<Camera>();
+            std::string message_to_render = "Px: " + std::to_string(cam.x) + "   Py: " + std::to_string(cam.y);
             render_font(message_to_render.c_str(), 100.0f, 100.0f);
 
             if (is_in_camera_view(cam, p, r.rect.w, r.rect.h)) {
@@ -137,36 +184,22 @@ int main(int argc, char* argv[])
                     r.rect.h * scaleY
                 };
 
-                flecs::entity e = it.entity(row);
                 if (!e.has<LocalPlayer>()) {
                     SDL_RenderTexture(m_renderer, t.texture, nullptr, &screenRect);
                 }
             }
 
-            SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
+            if (e.has<LocalPlayer>()) { 
+                SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
+            }
 
-            r.rect.x = m_current_window_width / 2.0f - r.rect.w / 2.0f;
-            r.rect.y = m_current_window_height / 2.0f - r.rect.h / 2.0f;
+            if (e.has<LocalPlayer>()) {
+                r.rect.x = m_current_window_width / 2.0f - r.rect.w / 2.0f;
+                r.rect.y = m_current_window_height / 2.0f - r.rect.h / 2.0f;
+            }
         });
 
-    // ecs.system<RectF, Texture>()
-    //     .each([](RectF& r, Texture& t) {
-
-    //         SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect);
-    //         SDL_Log("Py: %f DirY: %f", r.rect.x, r.rect.y);
-
-    //     });
-
-    auto e = ecs.entity()
-                 .insert([](Position& p, Direction& d, Speed& s) {
-                     p = { 0, 0 };
-                     d = { 1, 0 };
-                     s = { 1.0f };
-                 });
-
-    create_player_entity(ecs, 1, "circle.png", Position { 0.0f, 0.0f }, 1000.0f, true);
-
-    create_player_entity(ecs, 2, "hey.png", Position { 200.0f, 0.0f }, 0.0f, false);
+    // create_player_entity(ecs, 2000, "hey.png", Position { 200.0f, 0.0f }, 0.0f, false);
 
     SDL_FRect topRect { .x = 0.0f, .y = 0.0f, .w = static_cast<float>(m_current_window_width), .h = 100.0f };
 
@@ -191,6 +224,10 @@ int main(int argc, char* argv[])
 
         SDL_Event event {};
         poll_keyboard_state_entity(player_entity);
+
+        if (m_game_client.m_is_connected) {
+            m_game_client.parse_incoming_messages();
+        }
 
         // SDL_Log("MOVE DIR X: %f", player_entity.get<Direction>().x);
         // SDL_Log("MOVE DIR Y: %f", player_entity.get<Direction>().y);
@@ -225,11 +262,21 @@ int main(int argc, char* argv[])
                 }
 
                 case SDLK_F2: {
-                    std::cout << m_game_client.m_is_connected << "\n";
-                    if (!m_game_client.m_is_connected)
+                    if (!m_game_client.m_is_connected) {
                         m_game_client.connect();
-                    else
+
+                        MsgPlayerJoined msg;
+                        msg.id       = player_entity.get<PlayerId>().playerId;
+                        msg.position = player_entity.get<Position>();
+                        send_data(msg, k_nSteamNetworkingSend_Reliable);
+                    } else {
+                        MsgPlayerLeft msg;
+                        msg.id = player_entity.get<PlayerId>().playerId;
+                        send_data(msg, k_nSteamNetworkingSend_Reliable);
+                        m_players_by_id.clear();
+
                         m_game_client.disconnect_from_server();
+                    }
                 }
 
                 default: {
@@ -254,8 +301,8 @@ int main(int argc, char* argv[])
 
         // RENDER TOP
         SDL_SetRenderDrawColor(m_renderer, 100, 20, 20, 255);
-        SDL_RenderFillRect(m_renderer, &topRect);
-        SDL_SetRenderDrawColor(m_renderer, 50, 20, 20, 255);
+        // SDL_RenderFillRect(m_renderer, &topRect);
+        // SDL_SetRenderDrawColor(m_renderer, 50, 20, 20, 255);
 
         SDL_RenderPresent(m_renderer);
 
@@ -300,39 +347,42 @@ bool load_font()
     return true;
 }
 
-void create_player_entity(flecs::world ecs, int id, const char* texture_file_name, Position position, float speed, bool isLocal)
+flecs::entity create_player_entity(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, bool isLocal)
 {
 
     int          texture_width {};
     int          texture_height {};
     SDL_Texture* texture {};
     createTexture(&texture, texture_width, texture_height, texture_file_name);
+    flecs::entity player;
 
     if (isLocal)
-        auto player_as_entity = ecs.entity()
-                                    .add<PlayerTag>()
-                                    .set<PlayerId>({ id })
-                                    .add<Direction>()
-                                    .add<LocalPlayer>()
-                                    .set<Speed>({ speed })
-                                    .set<Texture>({ texture })
-                                    .set<Position>(position)
-                                    .set<RectF>({ position.x - texture_width / 2.0f,
-                                        position.y - texture_height / 2.0f,
-                                        static_cast<float>(texture_width),
-                                        static_cast<float>(texture_height) });
+        player = ecs.entity("LocalPlayer")
+                     .add<PlayerTag>()
+                     .set<PlayerId>({ id })
+                     .add<Direction>()
+                     .add<LocalPlayer>()
+                     .set<Speed>({ speed })
+                     .set<Texture>({ texture })
+                     .set<Position>(position)
+                     .set<RectF>({ position.x - texture_width / 2.0f,
+                         position.y - texture_height / 2.0f,
+                         static_cast<float>(texture_width),
+                         static_cast<float>(texture_height) });
     else
-        auto player_as_entity = ecs.entity()
-                                    .add<PlayerTag>()
-                                    .set<PlayerId>({ id })
-                                    .add<Direction>()
-                                    .set<Speed>({ speed })
-                                    .set<Texture>({ texture })
-                                    .set<Position>(position)
-                                    .set<RectF>({ position.x - texture_width / 2.0f,
-                                        position.y - texture_height / 2.0f,
-                                        static_cast<float>(texture_width),
-                                        static_cast<float>(texture_height) });
+        player = ecs.entity()
+                     .add<PlayerTag>()
+                     .set<PlayerId>({ id })
+                     .add<Direction>()
+                     .set<Speed>({ speed })
+                     .set<Texture>({ texture })
+                     .set<Position>(position)
+                     .set<RectF>({ position.x - texture_width / 2.0f,
+                         position.y - texture_height / 2.0f,
+                         static_cast<float>(texture_width),
+                         static_cast<float>(texture_height) });
+
+    return player;
 }
 
 void createPlayer(Player& entity, const char* textureFileName, Position position)
@@ -401,7 +451,6 @@ void createTexture(SDL_Texture** texture, int& width, int& height, const char* t
     }
 
     *texture = SDL_CreateTextureFromSurface(m_renderer, surface);
-    // player.texture = IMG_LoadTexture(m_renderer, player_texture_path);
     if (!*texture) {
         get_error();
         std::cout << player_texture_path << "\n";
@@ -459,10 +508,34 @@ void poll_keyboard_state_entity(flecs::entity player)
 
     dir.x *= player.get<Speed>().speed;
     dir.y *= player.get<Speed>().speed;
-    send_direction_data_to_server(dir);
+    // send_direction_and_position_data_to_server(dir, player.get<Position>());
+
+    if (dir.x || dir.y) {
+        // send_data(dir, k_nSteamNetworkingSend_Unreliable);
+        send_data(player.get<Position>(), k_nSteamNetworkingSend_Unreliable);
+    }
 }
 
-void send_direction_data_to_server(Direction dir)
+template <typename T>
+void send_data(T data, const int k_n_flag)
+{
+    if (m_game_client.m_is_connected) {
+        MsgHeader header;
+        header.type = MsgTraits<T>::type;
+        header.size = sizeof(T);
+
+        uint8_t buffer[sizeof(MsgHeader) + sizeof(T)];
+        memcpy(buffer, &header, sizeof(header));
+        memcpy(buffer + sizeof(header), &data, sizeof(data));
+
+        m_game_client.send_data(
+            &buffer,
+            sizeof(buffer),
+            k_n_flag);
+    }
+}
+
+void send_direction_and_position_data_to_server(Direction dir, Position pos)
 {
     if ((dir.x || dir.y) && m_game_client.m_is_connected) {
         MsgHeader header;
@@ -475,7 +548,22 @@ void send_direction_data_to_server(Direction dir)
 
         m_game_client.send_data(&buffer, sizeof(buffer),
             k_nSteamNetworkingSend_Unreliable);
+
+        MsgHeader pos_header;
+        pos_header.type = MsgType::Position;
+        pos_header.size = sizeof(Position);
+
+        uint8_t pos_buffer[sizeof(MsgHeader) + sizeof(Position)];
+        memcpy(pos_buffer, &pos_header, sizeof(pos_header));
+        memcpy(pos_buffer + sizeof(pos_header), &pos, sizeof(pos));
+
+        m_game_client.send_data(&pos_buffer, sizeof(pos_buffer),
+            k_nSteamNetworkingSend_Unreliable);
     }
+}
+
+void remove_player(uint32_t id)
+{
 }
 
 template <typename T>

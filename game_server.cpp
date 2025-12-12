@@ -28,6 +28,7 @@
 
 namespace {
 SteamNetworkingMicroseconds g_logTimeZero;
+uint32_t                    next_player_id = 1;
 }
 
 void GameServer::run()
@@ -132,14 +133,71 @@ void GameServer::send_message_to_all_clients(const std::string_view msg, HSteamN
     }
 }
 
-void GameServer::send_message_to_client(HSteamNetConnection conn, const std::string_view msg) noexcept
+// void GameServer::send_message_to_client(HSteamNetConnection conn, const std::string_view msg) noexcept
+// {
+//     m_sockets->SendMessageToConnection(
+//         conn,
+//         msg.data(),
+//         static_cast<uint32_t>(msg.size()),
+//         k_nSteamNetworkingSend_Reliable,
+//         nullptr);
+// }
+
+void GameServer::send_message_to_client(HSteamNetConnection conn, std::string_view msg) noexcept
 {
+    MsgHeader header;
+    header.type = MsgType::ChatMessage;
+    header.size = static_cast<uint32_t>(msg.size());
+
+    std::vector<uint8_t> buffer(sizeof(MsgHeader) + msg.size());
+
+    memcpy(buffer.data(), &header, sizeof(MsgHeader));
+    memcpy(buffer.data() + sizeof(MsgHeader), msg.data(), msg.size());
+
     m_sockets->SendMessageToConnection(
         conn,
-        msg.data(),
-        static_cast<uint32_t>(msg.size()),
+        buffer.data(),
+        buffer.size(),
         k_nSteamNetworkingSend_Reliable,
         nullptr);
+}
+
+template <typename T>
+void GameServer::send_data_to_all_clients(const T data, HSteamNetConnection except, const int k_n_flag)
+{
+    MsgHeader header;
+    header.type = MsgTraits<T>::type;
+    header.size = sizeof(T);
+
+    uint8_t buffer[sizeof(MsgHeader) + sizeof(T)];
+    memcpy(buffer, &header, sizeof(header));
+    memcpy(buffer + sizeof(header), &data, sizeof(data));
+
+    for (const auto& [conn, client] : m_map_clients) {
+        if (conn != except) {
+            m_sockets->SendMessageToConnection(
+                conn,
+                &buffer,
+                sizeof(buffer),
+                k_n_flag,
+                nullptr);
+        }
+    }
+}
+
+template <typename T>
+void GameServer::send_data(HSteamNetConnection conn, const T data, uint32 data_size, int k_n_flag)
+{
+    MsgHeader header;
+    header.type = MsgTraits<T>::type;
+    header.size = sizeof(T);
+    
+    uint8_t buffer[sizeof(MsgHeader) + sizeof(T)];
+    memcpy(buffer, &header, sizeof(header));
+    memcpy(buffer + sizeof(header), &data, sizeof(data));
+
+    m_sockets->SendMessageToConnection(conn, &buffer,
+        sizeof(buffer), k_n_flag, nullptr);
 }
 
 void GameServer::poll_local_user_input()
@@ -170,7 +228,7 @@ void GameServer::poll_incoming_messages()
         if (num_msgs == 0)
             break;
         if (num_msgs < 0)
-            fatal_error("Error checking for messages!");
+            fatal_error("Server received Error checking for messages!");
         assert(num_msgs == 1 && msg);
 
         auto it_client = m_map_clients.find(msg->m_conn);
@@ -181,7 +239,7 @@ void GameServer::poll_incoming_messages()
 
         if (size < sizeof(MsgHeader)) {
             msg->Release();
-            fatal_error("Invalid packet (too small)\n");
+            fatal_error("Server received Invalid packet (too small)\n");
         }
 
         MsgHeader header;
@@ -189,7 +247,7 @@ void GameServer::poll_incoming_messages()
 
         if (size < sizeof(MsgHeader) + header.size) {
             msg->Release();
-            fatal_error("Malformed packet (wrong size)\n");
+            fatal_error("Server received Malformed packet (wrong size)\n");
         }
 
         uint8_t* payload = (uint8_t*)data + sizeof(MsgHeader);
@@ -197,13 +255,14 @@ void GameServer::poll_incoming_messages()
         switch (header.type) {
         case MsgType::Direction: {
             if (header.size != sizeof(Direction)) {
-                printt("Invalid dir packet size\n");
+                printt("Server received Invalid dir packet size\n");
                 break;
             }
 
             Direction dir;
             memcpy(&dir, payload, sizeof(dir));
 
+            send_data_to_all_clients(dir, it_client->first);
             printt("Direction x=%f y=%f\n", dir.x, dir.y);
         } break;
 
@@ -214,21 +273,97 @@ void GameServer::poll_incoming_messages()
             send_message_to_all_clients(outgoing_msg, it_client->first);
             std::cout << "user_msg: " << outgoing_msg << "\n"; // DEBUG_PRINT
 
-        }
+        } break;
 
-        break;
+        case MsgType::Position: {
+            if (header.size != sizeof(Position)) {
+                printt("Server received Invalid dir packet size\n");
+                break;
+            }
+
+            Position pos;
+            memcpy(&pos, payload, sizeof(pos));
+
+            MsgPlayerPositionChanged position_changed_msg { it_client->second.id, pos };
+            send_data_to_all_clients(position_changed_msg, it_client->first);
+            // printt("Position x=%f y=%f\n", pos.x, pos.y);
+
+        } break;
+
+        case MsgType::MsgPlayerJoined: {
+            if (header.size != sizeof(MsgPlayerJoined)) {
+                printt("Server received Invalid dir packet size\n");
+                break;
+            }
+
+            MsgPlayerJoined joined_msg;
+            memcpy(&joined_msg, payload, sizeof(joined_msg));
+            joined_msg.id = next_player_id;
+            it_client->second.id = next_player_id;
+
+            MsgPlayerIdAssign assigned_id { next_player_id };
+            send_data(msg->m_conn, assigned_id, sizeof(assigned_id),
+                k_nSteamNetworkingSend_Reliable);
+
+            send_data_to_all_clients(joined_msg, it_client->first,
+                k_nSteamNetworkingSend_Reliable);
+            printt("Player '%d' joined x=%f y=%f\n",
+                joined_msg.id, joined_msg.position.x, joined_msg.position.y);
+
+            ++next_player_id;
+        } break;
+
+        case MsgType::MsgPlayerLeft: {
+            if (header.size != sizeof(MsgPlayerLeft)) {
+                printt("Server received Invalid dir packet size\n");
+                break;
+            }
+
+            MsgPlayerLeft left_msg;
+            memcpy(&left_msg, payload, sizeof(left_msg));
+
+            send_data_to_all_clients(left_msg, it_client->first,
+                k_nSteamNetworkingSend_Reliable);
+            printt("Player '%d' left.\n", left_msg.id);
+        } break;
+
+        case MsgType::MsgPlayerPositionChanged: {
+            if (header.size != sizeof(MsgPlayerPositionChanged)) {
+                printt("Client received Invalid MsgPlayerPositionChanged packet size\n");
+                break;
+            }
+
+            MsgPlayerPositionChanged position_changed_msg;
+            memcpy(&position_changed_msg, payload, sizeof(position_changed_msg));
+
+            printt("Player '%d' position changed x: '%f' y: '%f'.\n",
+                position_changed_msg.id, position_changed_msg.position.x, position_changed_msg.position.y);
+        } break;
 
         default:
-            printt("Unknown message type\n");
+            printt("Server received Unknown message type\n");
         }
 
         // std::string cmd(reinterpret_cast<const char*>(msg->m_pData), msg->m_cbSize);
         msg->Release();
 
         // std::cout << "user_msg: " << outgoing_msg << "\n"; // DEBUG_PRINT
-
     }
 }
+
+// void GameServer::send_direction_data_to_all_other_clients(Direction dir)
+// {
+//     MsgHeader header;
+//     header.type = MsgType::Direction;
+//     header.size = sizeof(Direction);
+
+//     uint8_t buffer[sizeof(MsgHeader) + sizeof(Direction)];
+//     memcpy(buffer, &header, sizeof(header));
+//     memcpy(buffer + sizeof(header), &dir, sizeof(dir));
+
+//     m_game_client.send_data(&buffer, sizeof(buffer),
+//         k_nSteamNetworkingSend_Unreliable);
+// }
 
 bool GameServer::is_all_reliable_messages_sent(ISteamNetworkingSockets* sockets, const std::unordered_map<HSteamNetConnection, Client>& clients)
 {
@@ -323,15 +458,15 @@ void GameServer::on_net_connection_status_changed(SteamNetConnectionStatusChange
         std::ostringstream welcomeMsg;
         welcomeMsg << "Welcome, stranger. Thou art known as '" << nick
                    << "'; use '/nick' to change.";
-        send_message_to_client(pInfo->m_hConn, welcomeMsg.str().c_str());
+        send_message_to_client(pInfo->m_hConn, welcomeMsg.str());
 
         if (m_map_clients.empty()) {
             send_message_to_client(pInfo->m_hConn, "Thou art utterly alone.");
         } else {
             send_message_to_client(pInfo->m_hConn,
-                std::format("{} companions greet you:", m_map_clients.size()).c_str());
+                std::format("{} companions greet you:", m_map_clients.size()));
             for (const auto& [conn, client] : m_map_clients) {
-                send_message_to_client(pInfo->m_hConn, client.nick.c_str());
+                send_message_to_client(pInfo->m_hConn, client.nick);
             }
         }
 

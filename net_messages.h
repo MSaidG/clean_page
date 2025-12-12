@@ -3,10 +3,19 @@
 #include <SDL3/SDL_render.h>
 #include <cstdint>
 
+
+template<typename T>
+struct MsgTraits;
+
 enum class MsgType : uint8_t {
     Direction = 1,
     PlayerInput = 2,
     ChatMessage = 3,
+    Position = 4,
+    MsgPlayerJoined = 5,
+    MsgPlayerLeft = 6,
+    MsgPlayerIdAssign = 7,
+    MsgPlayerPositionChanged = 8,
     // Add more types here
 };
 
@@ -66,7 +75,7 @@ struct RectF {
 
 #pragma pack(push, 1)
 struct PlayerId {
-    int playerId {};
+    uint32_t playerId {};
 };
 #pragma pack(pop)
 
@@ -79,5 +88,64 @@ struct Camera {
 };
 #pragma pack(pop)
 
+#pragma pack(push, 1)
+struct MsgPlayerJoined {
+    uint32_t id;
+    Position position;
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct MsgPlayerLeft {
+    uint32_t id;
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct MsgPlayerIdAssign {
+    uint32_t id;
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct MsgPlayerPositionChanged {
+    uint32_t id;
+    Position position;
+};
+#pragma pack(pop)
+
+
+
 struct LocalPlayer { };
 struct PlayerTag { };
+
+
+template <>
+struct MsgTraits<Direction> {
+    static constexpr MsgType type = MsgType::Direction;
+};
+
+template <>
+struct MsgTraits<Position> {
+    static constexpr MsgType type = MsgType::Position;
+};
+
+template <>
+struct MsgTraits<MsgPlayerJoined> {
+    static constexpr MsgType type = MsgType::MsgPlayerJoined;
+};
+
+template <>
+struct MsgTraits<MsgPlayerLeft> {
+    static constexpr MsgType type = MsgType::MsgPlayerLeft;
+};
+
+template <>
+struct MsgTraits<MsgPlayerPositionChanged> {
+    static constexpr MsgType type = MsgType::MsgPlayerPositionChanged;
+};
+
+template <>
+struct MsgTraits<MsgPlayerIdAssign> {
+    static constexpr MsgType type = MsgType::MsgPlayerIdAssign;
+};

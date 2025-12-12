@@ -1,4 +1,6 @@
+#include "net_messages.h"
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <queue>
 #include <steam/isteamnetworkingsockets.h>
@@ -17,6 +19,13 @@ public:
     void disconnect_from_server();
     void send_data(const void* data, uint32 data_size, int k_n_flag);
     bool m_is_connected { false };
+    void parse_incoming_messages();
+
+
+    std::function<void(uint32_t id, Position pos)> on_player_position_changed;
+    std::function<void(uint32_t id, Position pos)> on_player_joined;
+    std::function<void(uint32_t id)> on_player_id_assigned;
+    std::function<void(uint32_t id)> on_player_left;
 
 
 private:
@@ -30,7 +39,7 @@ private:
     std::atomic<bool>       m_is_quitting { false };
     std::mutex              m_mutexUserInputQueue;
 
-    void send_string_data(std::string_view msg);
+    void send_string_data_to_server(std::string_view msg);
     void poll_incoming_messages();
     void poll_local_user_input();
     void local_user_input_init();
