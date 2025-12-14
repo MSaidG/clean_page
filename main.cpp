@@ -23,6 +23,7 @@
 #include <SDL3/SDL_video.h>
 
 #include <SDL3_ttf/SDL_ttf.h>
+#include <cstddef>
 #include <cstring>
 #include <flecs.h>
 
@@ -53,11 +54,19 @@ constexpr float GRID_SIZE         = 100.0f; // 1 world unit per cell
 
 constexpr int DEFAULT_PLAYER_SIZE { 128 };
 
-void set_app_metadata();
-void get_error();
-void sdl_init();
-void createTexture(SDL_Texture** texture, int& width, int& height, const char* textureFileName);
-void poll_keyboard_state_entity(flecs::entity player);
+constexpr float BASE_PLAYER_SPEED { 250 };
+constexpr float BASE_PLAYER_HEALTH { 100 };
+
+constexpr float BASE_BULLET_SPEED { 500 };
+constexpr float BASE_BULLET_DAMAGE { 5 };
+constexpr float BASE_BULLET_RANGE { 500 };
+
+void        sdl_init();
+void        set_app_metadata();
+void        get_error();
+void        createTexture(SDL_Texture** texture, int& width, int& height, const char* textureFileName);
+const char* dptf_name = "hey_small.png";
+const char* dbtf_name = "bullet_14x14.png";
 
 SDL_Window*   m_window {};
 SDL_Renderer* m_renderer {};
@@ -76,26 +85,19 @@ float get_vector_length(T vec);
 template <typename T>
 void send_data(T data, const int k_n_flag);
 
-struct Player {
-    SDL_Texture* texture {};
-    Direction    move_direction {};
-    SDL_FRect    rect { .x {}, .y {}, .w {}, .h {} };
-    Position     position {};
-    float        speed { 400.0f };
-};
+SDL_Texture* get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
 
-SDL_Texture*  get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
-flecs::entity create_player_entity(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, bool isLocal);
+flecs::entity create_player(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, Health health, bool is_local);
+void          create_bullet(flecs::world ecs, const char* texture_file_name, Position position, Direction direction, float speed, Damage damage, Range range, bool is_local);
 
-void createPlayer(Player& entity, const char* textureFileName, Position position);
-void poll_keyboard_state(Player& player);
-bool is_in_camera(const SDL_FRect& cam, const Player& obj);
-bool is_in_camera_view(const Camera& cam, const Position objPosition, const float objWidth, const float objHeight);
+bool is_in_camera_view(const Camera& cam, const Position obj_position, const float obj_width, const float obj_height);
+void poll_keyboard_state(flecs::entity player);
+void update_physics(const float dt);
+
 bool load_font();
 void render_font(const char* message, float rect_x, float rect_y);
+
 void send_direction_and_position_data_to_server(Direction dir, Position pos);
-void remove_player(uint32_t id);
-void update_physics(const float dt);
 void disconnect_from_server(flecs::entity player);
 
 std::unordered_map<uint32, flecs::entity> m_players_by_id;
@@ -108,7 +110,13 @@ int main(int argc, char* argv[])
     m_game_client.init();
     m_game_client.on_player_joined = [&](uint32_t id, Position pos) {
         std::cout << "Getting joining ...\n";
-        auto player = create_player_entity(ecs, id, "hey.png", pos, 1000, false);
+        auto player = create_player(ecs,
+            id,
+            dptf_name,
+            pos,
+            BASE_PLAYER_SPEED,
+            Health { BASE_PLAYER_HEALTH },
+            false);
         m_players_by_id.insert_or_assign(id, player);
         std::cout << "Player " << id << " joined.\n";
     };
@@ -145,17 +153,25 @@ int main(int argc, char* argv[])
         std::cout << "Getting initial state ...\n";
         for (int i = 0; i < count; ++i) {
             std::cout << "Getting player " << clients[i].id << "\n";
-            auto player = create_player_entity(ecs, clients[i].id, "hey.png", clients[i].pos, 1000, false);
+            auto player = create_player(ecs,
+                clients[i].id,
+                dptf_name,
+                clients[i].pos,
+                BASE_PLAYER_SPEED,
+                Health { BASE_PLAYER_HEALTH },
+                false);
             m_players_by_id.insert_or_assign(clients[i].id, player);
             std::cout << "Player " << clients[i].id << " in the server.\n";
         }
     };
 
-    create_player_entity(ecs, 1, "hey.png", Position { 0.0f, 0.0f }, 1000.0f, true);
-
-    // auto camera_entity = ecs.entity("Camera").set<Camera>({ 0.0f, 0.0f,
-    //     static_cast<float>(m_window_w),
-    //     static_cast<float>(m_window_h) });
+    auto player_entity = create_player(ecs,
+        1,
+        dptf_name,
+        Position { 0.0f, 0.0f },
+        BASE_PLAYER_SPEED,
+        Health { BASE_PLAYER_HEALTH },
+        true);
 
     auto camera_entity = ecs.entity("Camera")
                              .set<Camera>({ 0.0f, 0.0f,
@@ -170,53 +186,56 @@ int main(int argc, char* argv[])
             Camera cam = { p.x - m_window_w * 0.5f, p.y - m_window_h * 0.5f,
                 static_cast<float>(m_window_w), static_cast<float>(m_window_h) };
             camera_entity.assign<Camera>(cam);
-
-
         });
 
-    flecs::system physics_system = ecs.system<Position, Direction, Speed, RectF, Texture>()
-        .kind(0) // flecs::OnValidate, flecs::PostUpdate
-        .each([camera_entity](flecs::iter& it, size_t row, Position& p, Direction& d, Speed s, RectF& r, Texture& t) {
-            flecs::entity e = it.entity(row);
-            if (e.has<LocalPlayer>()) {
-                p.x += d.x * s.speed * it.delta_time();
-                p.y += d.y * s.speed * it.delta_time();
-            }
-  
-        });
+    flecs::system player_physics
+        = ecs.system<Position, Direction, Speed, PlayerTag>()
+              .kind(0) // flecs::OnValidate, flecs::PostUpdate
+              .each([](flecs::iter& it, size_t row, Position& p, Direction& d, Speed s, PlayerTag) {
+                  flecs::entity e = it.entity(row);
+                  if (e.has<LocalPlayer>()) {
+                      p.x += d.x * s.speed * it.delta_time();
+                      p.y += d.y * s.speed * it.delta_time();
+                  }
+              });
+
+    flecs::system bullet_physics
+        = ecs.system<Position, Direction, Speed, Range, RectF, BulletTag>()
+              .kind(0)
+              .each([](flecs::iter it, size_t i, Position& p, Direction d, Speed s, Range& range, RectF& r, BulletTag) {
+                  if (range.value > 0) {
+                      p.x += d.x * s.speed * it.delta_time();
+                      p.y += d.y * s.speed * it.delta_time();
+
+                      range.value -= s.speed * it.delta_time();
+
+                      r.rect.x = p.x - r.rect.w * 0.5f;
+                      r.rect.y = p.y - r.rect.h * 0.5f;
+                  } else {
+                      SDL_DestroyTexture(it.entity(i).get_mut<Texture>().texture);
+                      it.entity(i).destruct();
+                  }
+
+                  // std::cout << "Bullet Range left: " << range.value << "\n";
+                  // std::cout << "Bullet Speed: " << s.speed << "\n";
+                  // std::cout << "Bullet Px Py: " << p.x << ", " << p.y << "\n";
+                  // std::cout << "Bullet delta time: " << it.delta_time() << "\n";
+                  // std::cout << "Bullet Dx Dy: " << d.x << ", " << d.y << "\n";
+              });
 
     ecs.system<Position, RectF, Texture>()
         .kind(flecs::OnStore)
         .each([camera_entity](flecs::iter& it, size_t row, Position p, RectF r, Texture t) {
             flecs::entity e = it.entity(row);
             if (e.has<LocalPlayer>()) {
-                r.rect.x = m_window_w / 2.0f - r.rect.w / 2.0f;
-                r.rect.y = m_window_h / 2.0f - r.rect.h / 2.0f;
+                r.rect.x = m_window_w * 0.5f - r.rect.w * 0.5f;
+                r.rect.y = m_window_h * 0.5f - r.rect.h * 0.5f;
             }
 
             Camera cam = camera_entity.get<Camera>();
 
             std::string message_to_render = "Px: " + std::to_string(cam.x) + "   Py: " + std::to_string(cam.y);
             render_font(message_to_render.c_str(), 100.0f, 100.0f);
-
-            if (is_in_camera_view(cam, p, r.rect.w, r.rect.h)) {
-                float     scaleX = (float)m_window_w / cam.w;
-                float     scaleY = (float)m_window_h / cam.h;
-                SDL_FRect screenRect {
-                    (r.rect.x - cam.x) * scaleX,
-                    (r.rect.y - cam.y) * scaleY,
-                    r.rect.w * scaleX,
-                    r.rect.h * scaleY
-                };
-
-                if (!e.has<LocalPlayer>()) {
-                    SDL_RenderTexture(m_renderer, t.texture, nullptr, &screenRect);
-                }
-            }
-
-            if (e.has<LocalPlayer>()) {
-                SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
-            }
 
             float camLeft   = cam.x;
             float camRight  = cam.x + cam.w;
@@ -255,20 +274,39 @@ int main(int argc, char* argv[])
                     m_window_w, (int)screenY);
             }
 
+            if (is_in_camera_view(cam, p, r.rect.w, r.rect.h)) {
+                float     scaleX = (float)m_window_w / cam.w;
+                float     scaleY = (float)m_window_h / cam.h;
+                SDL_FRect screenRect {
+                    (r.rect.x - cam.x) * scaleX,
+                    (r.rect.y - cam.y) * scaleY,
+                    r.rect.w * scaleX,
+                    r.rect.h * scaleY
+                };
+
+                if (!e.has<LocalPlayer>()) {
+                    SDL_RenderTexture(m_renderer, t.texture, nullptr, &screenRect);
+                }
+            }
+
+            if (e.has<LocalPlayer>()) {
+                SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
+            }
+
             SDL_SetRenderDrawColor(m_renderer, 100, 20, 20, 255);
         });
 
-    auto          players = ecs.query<PlayerId>();
-    flecs::entity player_entity {};
-    players.each([&](flecs::entity e, PlayerId& pid) {
-        if (pid.playerId == 1) {
-            player_entity = e;
-        }
-    });
+    // auto          players = ecs.query<PlayerId>();
+    // flecs::entity player_entity {};
+    // players.each([&](flecs::entity e, PlayerId& pid) {
+    //     if (pid.playerId == 1) {
+    //         player_entity = e;
+    //     }
+    // });
 
     bool isAppRunning = true;
 
-    constexpr float fixed_dt    = 1.0f / 100.0f;
+    constexpr float fixed_dt    = 1.0f / 60.0f;
     const int       MAX_STEPS   = 5;
     float           accumulator = 0.0f;
 
@@ -284,20 +322,15 @@ int main(int argc, char* argv[])
 
         int steps = 0;
         while (accumulator >= fixed_dt && steps < MAX_STEPS) {
-            physics_system.run(fixed_dt);
+            player_physics.run(fixed_dt);
+            bullet_physics.run(fixed_dt);
             accumulator -= fixed_dt;
             ++steps;
         }
         float rendering_alpha = accumulator / fixed_dt;
-        // Render(rendering_alpha)
-        // renderPos = currPos * rendering_alpha + prevPos * (1 - rendering_alpha) ;
-
-        // alpha = 0.0 → exactly at previous physics state
-        // alpha = 0.5 → halfway to next physics state
-        // alpha = 0.99 → almost at next physics state
 
         SDL_Event event {};
-        poll_keyboard_state_entity(player_entity);
+        poll_keyboard_state(player_entity);
 
         if (m_game_client.m_is_connected) {
             m_game_client.parse_incoming_messages();
@@ -356,10 +389,43 @@ int main(int argc, char* argv[])
                 SDL_GetWindowSizeInPixels(m_window, &m_window_w, &m_window_h);
                 break;
 
+            case SDL_EVENT_MOUSE_MOTION:
+                // std::cout << "MouseX, MouseY: "
+                //   << event.motion.x << ", " << event.motion.y << "\n";
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+                Position play_pos = player_entity.get<Position>();
+
+                float world_x = camera_entity.get<Camera>().x + event.motion.x;
+                float world_y = camera_entity.get<Camera>().y + event.motion.y;
+
+                Direction normalized_dir = normalize_vector(Direction { world_x - play_pos.x, world_y - play_pos.y });
+                normalized_dir.x += player_entity.get<Direction>().x * 0.5f;
+                normalized_dir.y += player_entity.get<Direction>().y * 0.5f;
+
+                bool is_local = true;
+                create_bullet(ecs,
+                    dbtf_name,
+                    play_pos,
+                    normalized_dir,
+                    BASE_BULLET_SPEED,
+                    Damage { BASE_BULLET_DAMAGE },
+                    Range { BASE_BULLET_RANGE },
+                    is_local);
+
+            } break;
+
             default:
                 break;
             }
         }
+
+        // Render(rendering_alpha)
+        // renderPos = currPos * rendering_alpha + prevPos * (1 - rendering_alpha) ;
+
+        // alpha = 0.0 → exactly at previous physics state
+        // alpha = 0.5 → halfway to next physics state
+        // alpha = 0.99 → almost at next physics state
 
         SDL_RenderClear(m_renderer);
         ecs.progress(dt);
@@ -400,10 +466,6 @@ int main(int argc, char* argv[])
     return 0;
 }
 
-void update_physics(const float dt)
-{
-}
-
 bool load_font()
 {
     if (!TTF_Init()) {
@@ -418,28 +480,66 @@ bool load_font()
     return true;
 }
 
-flecs::entity create_player_entity(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, bool isLocal)
+void create_bullet(flecs::world ecs, const char* texture_file_name, Position pos, Direction dir, float speed, Damage damage, Range range, bool isLocal)
+{
+    int          tex_w {};
+    int          tex_h {};
+    SDL_Texture* texture {};
+    createTexture(&texture, tex_w, tex_h, texture_file_name);
+
+    if (isLocal)
+        ecs.entity()
+            .add<BulletTag>()
+            .add<LocalBullet>()
+            .set<Speed>({ speed })
+            .set<Texture>({ texture })
+            .set<Position>(pos)
+            .set<Direction>(dir)
+            .set<Damage>(damage)
+            .set<Range>(range)
+            .set<RectF>({ pos.x - tex_w / 2.0f,
+                pos.y - tex_h / 2.0f,
+                static_cast<float>(tex_w),
+                static_cast<float>(tex_h) });
+    else
+        ecs.entity()
+            .add<BulletTag>()
+            .add<Direction>()
+            .set<Speed>({ speed })
+            .set<Texture>({ texture })
+            .set<Position>(pos)
+            .set<Direction>(dir)
+            .set<Damage>(damage)
+            .set<Range>(range)
+            .set<RectF>({ pos.x - tex_w / 2.0f,
+                pos.y - tex_h / 2.0f,
+                static_cast<float>(tex_w),
+                static_cast<float>(tex_h) });
+}
+
+flecs::entity create_player(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, Health health, bool isLocal)
 {
 
-    int          texture_width {};
-    int          texture_height {};
+    int          tex_w {};
+    int          tex_h {};
     SDL_Texture* texture {};
-    createTexture(&texture, texture_width, texture_height, texture_file_name);
+    createTexture(&texture, tex_w, tex_h, texture_file_name);
     flecs::entity player;
 
     if (isLocal)
         player = ecs.entity("LocalPlayer")
                      .add<PlayerTag>()
+                     .add<LocalPlayer>()
                      .set<PlayerId>({ id })
                      .add<Direction>()
-                     .add<LocalPlayer>()
                      .set<Speed>({ speed })
                      .set<Texture>({ texture })
                      .set<Position>(position)
-                     .set<RectF>({ position.x - texture_width / 2.0f,
-                         position.y - texture_height / 2.0f,
-                         static_cast<float>(texture_width),
-                         static_cast<float>(texture_height) });
+                     .set<Health>({ health })
+                     .set<RectF>({ position.x - tex_w / 2.0f,
+                         position.y - tex_h / 2.0f,
+                         static_cast<float>(tex_w),
+                         static_cast<float>(tex_h) });
     else
         player = ecs.entity()
                      .add<PlayerTag>()
@@ -448,34 +548,13 @@ flecs::entity create_player_entity(flecs::world ecs, uint32_t id, const char* te
                      .set<Speed>({ speed })
                      .set<Texture>({ texture })
                      .set<Position>(position)
-                     .set<RectF>({ position.x - texture_width / 2.0f,
-                         position.y - texture_height / 2.0f,
-                         static_cast<float>(texture_width),
-                         static_cast<float>(texture_height) });
+                     .set<Health>({ health })
+                     .set<RectF>({ position.x - tex_w / 2.0f,
+                         position.y - tex_h / 2.0f,
+                         static_cast<float>(tex_w),
+                         static_cast<float>(tex_h) });
 
     return player;
-}
-
-void createPlayer(Player& entity, const char* textureFileName, Position position)
-{
-    int texture_width {};
-    int texture_height {};
-    createTexture(&entity.texture, texture_width, texture_height, textureFileName);
-    entity.rect.x   = position.x - texture_width / 2.0f;
-    entity.rect.y   = position.y - texture_height / 2.0f;
-    entity.rect.h   = static_cast<float>(texture_height);
-    entity.rect.w   = static_cast<float>(texture_width);
-    entity.position = position;
-}
-
-bool is_in_camera(const SDL_FRect& cam, const Player& obj)
-{
-    return !(
-        obj.position.x + obj.rect.w < cam.x || // object is left of camera
-        obj.position.x - obj.rect.h > cam.x + cam.w || // object is right of camera
-        obj.position.y + obj.rect.h < cam.y || // object is above camera
-        obj.position.y - obj.rect.h > cam.y + cam.h // object is below camera
-    );
 }
 
 bool is_in_camera_view(const Camera& cam, const Position objPosition, const float objWidth, const float objHeight)
@@ -534,7 +613,7 @@ void createTexture(SDL_Texture** texture, int& width, int& height, const char* t
 
 bool isPressedDown {};
 bool isPressedRight {};
-void poll_keyboard_state_entity(flecs::entity player)
+void poll_keyboard_state(flecs::entity player)
 {
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
     bool        isVertical {};
@@ -626,10 +705,6 @@ void send_direction_and_position_data_to_server(Direction dir, Position pos)
         m_game_client.send_data(&pos_buffer, sizeof(pos_buffer),
             k_nSteamNetworkingSend_Unreliable);
     }
-}
-
-void remove_player(uint32_t id)
-{
 }
 
 template <typename T>

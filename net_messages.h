@@ -62,6 +62,26 @@ struct Speed {
 #pragma pack(pop)
 
 #pragma pack(push, 1)
+struct Health {
+    float max {};
+    float current { max };
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct Damage {
+    float value {};
+    float crit_value {};
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct Range {
+    float value {};
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
 struct Texture {
     SDL_Texture* texture {};
 };
@@ -130,7 +150,9 @@ struct MsgInitialState {
 #pragma pack(pop)
 
 struct LocalPlayer { };
+struct LocalBullet { };
 struct PlayerTag { };
+struct BulletTag { };
 struct PhysicsSystem { };
 
 template <>
