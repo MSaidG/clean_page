@@ -2,28 +2,26 @@
 #include <SDL3/SDL_rect.h>
 #include <SDL3/SDL_render.h>
 #include <cstdint>
-#include <string>
 
-
-template<typename T>
+template <typename T>
 struct MsgTraits;
 
 enum class MsgType : uint8_t {
-    Direction = 1,
-    PlayerInput = 2,
-    ChatMessage = 3,
-    Position = 4,
-    MsgPlayerJoined = 5,
-    MsgPlayerLeft = 6,
-    MsgPlayerIdAssign = 7,
+    Direction                = 1,
+    PlayerInput              = 2,
+    ChatMessage              = 3,
+    Position                 = 4,
+    MsgPlayerJoined          = 5,
+    MsgPlayerLeft            = 6,
+    MsgPlayerIdAssign        = 7,
     MsgPlayerPositionChanged = 8,
-    MsgInitialState = 9,
+    MsgInitialState          = 9,
     // Add more types here
 };
 
 #pragma pack(push, 1)
 struct MsgHeader {
-    MsgType type;
+    MsgType  type;
     uint16_t size; // Size of payload (bytes)
 };
 #pragma pack(pop)
@@ -33,7 +31,7 @@ struct MsgHeader {
 struct Direction {
     float x;
     float y;
-}; 
+};
 #pragma pack(pop)
 
 #pragma pack(push, 1)
@@ -92,12 +90,11 @@ struct Camera {
 
 #pragma pack(push, 1)
 struct Client {
-    char nick[32];
+    char     nick[32];
     uint32_t id;
     Position pos;
 };
 #pragma pack(pop)
-
 
 #pragma pack(push, 1)
 struct MsgPlayerJoined {
@@ -125,19 +122,16 @@ struct MsgPlayerPositionChanged {
 };
 #pragma pack(pop)
 
-
 #pragma pack(push, 1)
 struct MsgInitialState {
     uint32_t count;
-    Client clients[8];
+    Client   clients[8];
 };
 #pragma pack(pop)
 
-
-
 struct LocalPlayer { };
 struct PlayerTag { };
-
+struct PhysicsSystem { };
 
 template <>
 struct MsgTraits<Direction> {

@@ -133,16 +133,6 @@ void GameServer::send_message_to_all_clients(const std::string_view msg, HSteamN
     }
 }
 
-// void GameServer::send_message_to_client(HSteamNetConnection conn, const std::string_view msg) noexcept
-// {
-//     m_sockets->SendMessageToConnection(
-//         conn,
-//         msg.data(),
-//         static_cast<uint32_t>(msg.size()),
-//         k_nSteamNetworkingSend_Reliable,
-//         nullptr);
-// }
-
 void GameServer::send_message_to_client(HSteamNetConnection conn, std::string_view msg) noexcept
 {
     MsgHeader header;

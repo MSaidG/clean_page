@@ -47,6 +47,10 @@
 constexpr int WINDOW_WIDTH { 1360 };
 constexpr int WINDOW_HEIGHT { 960 };
 
+constexpr float WORLD_VIEW_WIDTH  = 20.0f;
+constexpr float WORLD_VIEW_HEIGHT = 12.0f;
+constexpr float GRID_SIZE         = 100.0f; // 1 world unit per cell
+
 constexpr int DEFAULT_PLAYER_SIZE { 128 };
 
 void set_app_metadata();
@@ -60,8 +64,8 @@ SDL_Renderer* m_renderer {};
 TTF_Font*     m_font = nullptr;
 GameClient    m_game_client;
 
-int m_current_window_width  = WINDOW_WIDTH;
-int m_current_window_height = WINDOW_HEIGHT;
+int m_window_w = WINDOW_WIDTH;
+int m_window_h = WINDOW_HEIGHT;
 
 template <typename T>
 T normalize_vector(T vec);
@@ -91,18 +95,16 @@ bool load_font();
 void render_font(const char* message, float rect_x, float rect_y);
 void send_direction_and_position_data_to_server(Direction dir, Position pos);
 void remove_player(uint32_t id);
+void update_physics(const float dt);
+void disconnect_from_server(flecs::entity player);
 
 std::unordered_map<uint32, flecs::entity> m_players_by_id;
 
 int main(int argc, char* argv[])
 {
-    sdl_init();
     flecs::world ecs;
-    create_player_entity(ecs, 1, "hey.png", Position { 0.0f, 0.0f }, 1000.0f, true);
-    // create_player_entity(ecs, 2, "circle.png", Position { 100.0f, 0.0f }, 0.0f, false);
-    // create_player_entity(ecs, 3, "green_circle.png", Position { 300.0f, 0.0f }, 0.0f, false);
-    // create_player_entity(ecs, 2, "hey.png", Position { 100.0f, 0.0f }, 0.0f, false);
 
+    sdl_init();
     m_game_client.init();
     m_game_client.on_player_joined = [&](uint32_t id, Position pos) {
         std::cout << "Getting joining ...\n";
@@ -149,46 +151,57 @@ int main(int argc, char* argv[])
         }
     };
 
-    SDL_FRect camera { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
+    create_player_entity(ecs, 1, "hey.png", Position { 0.0f, 0.0f }, 1000.0f, true);
 
-    auto camera_entity = ecs.entity("Camera").set<Camera>({ 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) });
+    // auto camera_entity = ecs.entity("Camera").set<Camera>({ 0.0f, 0.0f,
+    //     static_cast<float>(m_window_w),
+    //     static_cast<float>(m_window_h) });
 
-    // Camera cam = camera_entity.get_mut<Camera>();
-    Camera cam { 0.0f, 0.0f, static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
+    auto camera_entity = ecs.entity("Camera")
+                             .set<Camera>({ 0.0f, 0.0f,
+                                 WORLD_VIEW_WIDTH,
+                                 WORLD_VIEW_HEIGHT });
 
-    ecs.system<Position, LocalPlayer>()
+    ecs.system<Position, RectF, LocalPlayer>()
         .kind(flecs::PreUpdate)
-        .each([&, camera_entity](Position& player_pos, LocalPlayer) {
-            Camera cam = camera_entity.get_mut<Camera>();
-            // cam.x = player_pos.x - cam.w * 0.5f;
-            // cam.y = player_pos.y - cam.h * 0.5f;
-            cam = { player_pos.x - m_current_window_width * 0.5f, player_pos.y - m_current_window_height * 0.5f,
-                static_cast<float>(m_current_window_width), static_cast<float>(m_current_window_height) };
-            camera_entity.set<Camera>(cam);
-            // SDL_Log("Cam X, Cam Y: %f, %f", player_pos.x - m_current_window_width / 2.0f, player_pos.y - m_current_window_height / 2.0f);
+        .each([&, camera_entity](flecs::iter it, size_t row, Position p, RectF r, LocalPlayer) {
+            flecs::entity e = it.entity(row);
+
+            Camera cam = { p.x - m_window_w * 0.5f, p.y - m_window_h * 0.5f,
+                static_cast<float>(m_window_w), static_cast<float>(m_window_h) };
+            camera_entity.assign<Camera>(cam);
+
+
         });
 
-    ecs.system<Position, Direction, Speed, RectF, Texture>()
+    flecs::system physics_system = ecs.system<Position, Direction, Speed, RectF, Texture>()
+        .kind(0) // flecs::OnValidate, flecs::PostUpdate
         .each([camera_entity](flecs::iter& it, size_t row, Position& p, Direction& d, Speed s, RectF& r, Texture& t) {
             flecs::entity e = it.entity(row);
             if (e.has<LocalPlayer>()) {
                 p.x += d.x * s.speed * it.delta_time();
                 p.y += d.y * s.speed * it.delta_time();
             }
+  
+        });
 
-            // SDL_Log("Px: %f DirX: %f RectW: %f RectX: %f", p.x, d.x, r.rect.w, r.rect.x);
-            // SDL_Log("Py: %f DirY: %f RectH: %f RectY: %f", p.y, d.y, r.rect.h, r.rect.y);
-            // SDL_Log("CamX, CamY: %f, %f", cam.x, cam.y);
+    ecs.system<Position, RectF, Texture>()
+        .kind(flecs::OnStore)
+        .each([camera_entity](flecs::iter& it, size_t row, Position p, RectF r, Texture t) {
+            flecs::entity e = it.entity(row);
+            if (e.has<LocalPlayer>()) {
+                r.rect.x = m_window_w / 2.0f - r.rect.w / 2.0f;
+                r.rect.y = m_window_h / 2.0f - r.rect.h / 2.0f;
+            }
 
-            Camera      cam               = camera_entity.get_mut<Camera>();
+            Camera cam = camera_entity.get<Camera>();
+
             std::string message_to_render = "Px: " + std::to_string(cam.x) + "   Py: " + std::to_string(cam.y);
             render_font(message_to_render.c_str(), 100.0f, 100.0f);
 
             if (is_in_camera_view(cam, p, r.rect.w, r.rect.h)) {
-                // Convert world => screen space
-
-                float     scaleX = (float)m_current_window_width / cam.w;
-                float     scaleY = (float)m_current_window_height / cam.h;
+                float     scaleX = (float)m_window_w / cam.w;
+                float     scaleY = (float)m_window_h / cam.h;
                 SDL_FRect screenRect {
                     (r.rect.x - cam.x) * scaleX,
                     (r.rect.y - cam.y) * scaleY,
@@ -205,19 +218,45 @@ int main(int argc, char* argv[])
                 SDL_RenderTexture(m_renderer, t.texture, nullptr, &r.rect); //&player.rect
             }
 
-            if (e.has<LocalPlayer>()) {
-                r.rect.x = m_current_window_width / 2.0f - r.rect.w / 2.0f;
-                r.rect.y = m_current_window_height / 2.0f - r.rect.h / 2.0f;
+            float camLeft   = cam.x;
+            float camRight  = cam.x + cam.w;
+            float camTop    = cam.y;
+            float camBottom = cam.y + cam.h;
+
+            int startX = (int)std::floor(camLeft / GRID_SIZE);
+            int endX   = (int)std::ceil(camRight / GRID_SIZE);
+
+            int startY = (int)std::floor(camTop / GRID_SIZE);
+            int endY   = (int)std::ceil(camBottom / GRID_SIZE);
+
+            float scaleX = (float)m_window_w / cam.w;
+            float scaleY = (float)m_window_h / cam.h;
+
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 100);
+            for (int x = startX; x <= endX; ++x) {
+                float worldX = x * GRID_SIZE;
+
+                float screenX = (worldX - cam.x) * scaleX;
+
+                SDL_RenderLine(
+                    m_renderer,
+                    (int)screenX, 0,
+                    (int)screenX, m_window_h);
             }
+
+            for (int y = startY; y <= endY; ++y) {
+                float worldY = y * GRID_SIZE;
+
+                float screenY = (worldY - cam.y) * scaleY;
+
+                SDL_RenderLine(
+                    m_renderer,
+                    0, (int)screenY,
+                    m_window_w, (int)screenY);
+            }
+
+            SDL_SetRenderDrawColor(m_renderer, 100, 20, 20, 255);
         });
-
-    // create_player_entity(ecs, 2000, "hey.png", Position { 200.0f, 0.0f }, 0.0f, false);
-
-    SDL_FRect topRect { .x = 0.0f, .y = 0.0f, .w = static_cast<float>(m_current_window_width), .h = 100.0f };
-
-    Uint64   last         = SDL_GetPerformanceCounter();
-    uint64_t freq         = SDL_GetPerformanceFrequency();
-    bool     isAppRunning = true;
 
     auto          players = ecs.query<PlayerId>();
     flecs::entity player_entity {};
@@ -226,13 +265,36 @@ int main(int argc, char* argv[])
             player_entity = e;
         }
     });
-    // auto move_direction = player_entity.get_mut<Direction>();
 
+    bool isAppRunning = true;
+
+    constexpr float fixed_dt    = 1.0f / 100.0f;
+    const int       MAX_STEPS   = 5;
+    float           accumulator = 0.0f;
+
+    Uint64   last = SDL_GetPerformanceCounter();
+    uint64_t freq = SDL_GetPerformanceFrequency();
     while (isAppRunning) {
-
         Uint64 now = SDL_GetPerformanceCounter();
-        float  dt  = static_cast<float>(now - last) / SDL_GetPerformanceFrequency();
+        float  dt  = static_cast<float>(now - last) / freq;
         last       = now;
+
+        dt = std::min(dt, 0.25f);
+        accumulator += dt;
+
+        int steps = 0;
+        while (accumulator >= fixed_dt && steps < MAX_STEPS) {
+            physics_system.run(fixed_dt);
+            accumulator -= fixed_dt;
+            ++steps;
+        }
+        float rendering_alpha = accumulator / fixed_dt;
+        // Render(rendering_alpha)
+        // renderPos = currPos * rendering_alpha + prevPos * (1 - rendering_alpha) ;
+
+        // alpha = 0.0 → exactly at previous physics state
+        // alpha = 0.5 → halfway to next physics state
+        // alpha = 0.99 → almost at next physics state
 
         SDL_Event event {};
         poll_keyboard_state_entity(player_entity);
@@ -240,9 +302,6 @@ int main(int argc, char* argv[])
         if (m_game_client.m_is_connected) {
             m_game_client.parse_incoming_messages();
         }
-
-        // SDL_Log("MOVE DIR X: %f", player_entity.get<Direction>().x);
-        // SDL_Log("MOVE DIR Y: %f", player_entity.get<Direction>().y);
 
         while (SDL_PollEvent(&event)) {
 
@@ -282,19 +341,7 @@ int main(int argc, char* argv[])
                         msg.position = player_entity.get<Position>();
                         send_data(msg, k_nSteamNetworkingSend_Reliable);
                     } else {
-                        MsgPlayerLeft msg;
-                        msg.id = player_entity.get<PlayerId>().playerId;
-                        send_data(msg, k_nSteamNetworkingSend_Reliable);
-
-                        m_game_client.disconnect_from_server();
-
-                        for (const auto& [count, entity] : m_players_by_id) {
-                            if (!entity.has<LocalPlayer>()) {
-                                SDL_DestroyTexture(entity.get<Texture>().texture);
-                                entity.destruct();
-                            }
-                        }
-                        m_players_by_id.clear();
+                        disconnect_from_server(player_entity);
                     }
                 }
 
@@ -306,8 +353,7 @@ int main(int argc, char* argv[])
             }
 
             case SDL_EVENT_WINDOW_RESIZED:
-                SDL_GetWindowSizeInPixels(m_window, &m_current_window_width, &m_current_window_height);
-                topRect = { .x = 0.0f, .y = 0.0f, .w = static_cast<float>(m_current_window_width), .h = 100.0f };
+                SDL_GetWindowSizeInPixels(m_window, &m_window_w, &m_window_h);
                 break;
 
             default:
@@ -317,15 +363,13 @@ int main(int argc, char* argv[])
 
         SDL_RenderClear(m_renderer);
         ecs.progress(dt);
+        SDL_RenderPresent(m_renderer);
 
         // RENDER TOP
-        SDL_SetRenderDrawColor(m_renderer, 100, 20, 20, 255);
         // SDL_RenderFillRect(m_renderer, &topRect);
         // SDL_SetRenderDrawColor(m_renderer, 50, 20, 20, 255);
 
-        SDL_RenderPresent(m_renderer);
-
-        SDL_GetWindowSizeInPixels(m_window, &m_current_window_width, &m_current_window_height);
+        SDL_GetWindowSizeInPixels(m_window, &m_window_w, &m_window_h);
     }
 
     SDL_DestroyTexture(player_entity.get_mut<Texture>().texture);
@@ -337,10 +381,14 @@ int main(int argc, char* argv[])
         }
     });
 
+    if (m_game_client.m_is_connected) {
+        disconnect_from_server(player_entity);
+    }
+
     SDL_DestroyRenderer(m_renderer);
     SDL_DestroyWindow(m_window);
-    TTF_CloseFont(m_font);
 
+    TTF_CloseFont(m_font);
     TTF_Quit();
 
     if (SDL_WasInit(SDL_INIT_VIDEO)) {
@@ -350,6 +398,10 @@ int main(int argc, char* argv[])
 
     m_game_client.shutdown();
     return 0;
+}
+
+void update_physics(const float dt)
+{
 }
 
 bool load_font()
@@ -518,16 +570,11 @@ void poll_keyboard_state_entity(flecs::entity player)
     if (!isHorizontal)
         dir.x = 0.0f;
 
-    // SDL_Log("BEFORE MOVE DIR X: %f", dir.x);
-    // SDL_Log("BEFORE MOVE DIR Y: %f", dir.y);
     dir = normalize_vector(dir);
-    // SDL_Log("MOVE DIR X: %f", dir.x);
-    // SDL_Log("MOVE DIR Y: %f", dir.y);
-    player.set<Direction>(dir);
+    player.assign<Direction>({ dir });
 
     dir.x *= player.get<Speed>().speed;
     dir.y *= player.get<Speed>().speed;
-    // send_direction_and_position_data_to_server(dir, player.get<Position>());
 
     if (dir.x || dir.y) {
         // send_data(dir, k_nSteamNetworkingSend_Unreliable);
@@ -599,6 +646,23 @@ T normalize_vector(T vec)
     // // SDL_LogDebug(1, "Vec X: %f", vec.x);
     // // SDL_LogDebug(1, "Vec Y: %f", vec.y);
     return (length != 0.0f) ? T { vec.x / length, vec.y / length } : T { 0.0f, 0.0f };
+}
+
+void disconnect_from_server(flecs::entity player)
+{
+    MsgPlayerLeft msg;
+    msg.id = player.get<PlayerId>().playerId;
+    send_data(msg, k_nSteamNetworkingSend_Reliable);
+
+    m_game_client.disconnect_from_server();
+
+    for (const auto& [count, entity] : m_players_by_id) {
+        if (!entity.has<LocalPlayer>()) {
+            SDL_DestroyTexture(entity.get<Texture>().texture);
+            entity.destruct();
+        }
+    }
+    m_players_by_id.clear();
 }
 
 void sdl_init()
