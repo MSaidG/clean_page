@@ -25,6 +25,7 @@ public:
     std::function<void(uint32_t id, Position pos)> on_player_position_changed;
     std::function<void(uint32_t id, Position pos)> on_player_joined;
     std::function<void(uint32_t id, Client clients[8])> on_players_initial_state_sent;
+    std::function<void(MsgSpawnBullet)> on_players_spawn_bullet;
     std::function<void(uint32_t id)> on_player_id_assigned;
     std::function<void(uint32_t id)> on_player_left;
 

@@ -350,6 +350,21 @@ void GameServer::poll_incoming_messages()
                 position_changed_msg.id, position_changed_msg.position.x, position_changed_msg.position.y);
         } break;
 
+        case MsgType::MsgSpawnBullet: {
+            if (header.size != sizeof(MsgSpawnBullet)) {
+                printt("Client received Invalid MsgSpawnBullet packet size\n");
+                break;
+            }
+
+            MsgSpawnBullet spawn_bullet_msg;
+            memcpy(&spawn_bullet_msg, payload, sizeof(spawn_bullet_msg));
+
+            send_data_to_all_clients(spawn_bullet_msg, it_client->first, k_nSteamNetworkingSend_Unreliable);
+
+            // printt("Player '%d' position changed x: '%f' y: '%f'.\n",
+            //     spawn_bullet_msg.id, spawn_bullet_msg.position.x, spawn_bullet_msg.position.y);
+        } break;
+
         default:
             printt("Server received Unknown message type\n");
         }

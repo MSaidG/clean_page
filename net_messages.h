@@ -16,6 +16,7 @@ enum class MsgType : uint8_t {
     MsgPlayerIdAssign        = 7,
     MsgPlayerPositionChanged = 8,
     MsgInitialState          = 9,
+    MsgSpawnBullet           = 10,
     // Add more types here
 };
 
@@ -149,6 +150,16 @@ struct MsgInitialState {
 };
 #pragma pack(pop)
 
+#pragma pack(push, 1)
+struct MsgSpawnBullet {
+    Position pos;
+    Direction direction;
+    Speed speed;
+    Range range;
+    Damage damage;
+};
+#pragma pack(pop)
+
 struct LocalPlayer { };
 struct LocalBullet { };
 struct PlayerTag { };
@@ -188,4 +199,9 @@ struct MsgTraits<MsgPlayerIdAssign> {
 template <>
 struct MsgTraits<MsgInitialState> {
     static constexpr MsgType type = MsgType::MsgInitialState;
+};
+
+template <>
+struct MsgTraits<MsgSpawnBullet> {
+    static constexpr MsgType type = MsgType::MsgSpawnBullet;
 };

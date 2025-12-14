@@ -88,7 +88,7 @@ void send_data(T data, const int k_n_flag);
 SDL_Texture* get_font_texture(SDL_Renderer* renderer, const char* message, SDL_Color color);
 
 flecs::entity create_player(flecs::world ecs, uint32_t id, const char* texture_file_name, Position position, float speed, Health health, bool is_local);
-void          create_bullet(flecs::world ecs, const char* texture_file_name, Position position, Direction direction, float speed, Damage damage, Range range, bool is_local);
+void          create_bullet(flecs::world ecs, const char* texture_file_name, Position position, Direction direction, Speed speed, Damage damage, Range range, bool is_local);
 
 bool is_in_camera_view(const Camera& cam, const Position obj_position, const float obj_width, const float obj_height);
 void poll_keyboard_state(flecs::entity player);
@@ -163,6 +163,10 @@ int main(int argc, char* argv[])
             m_players_by_id.insert_or_assign(clients[i].id, player);
             std::cout << "Player " << clients[i].id << " in the server.\n";
         }
+    };
+
+    m_game_client.on_players_spawn_bullet = [&](MsgSpawnBullet msg) {
+        create_bullet(ecs, dbtf_name, msg.pos, msg.direction, msg.speed, msg.damage, msg.range, false);
     };
 
     auto player_entity = create_player(ecs,
@@ -404,11 +408,20 @@ int main(int argc, char* argv[])
                 normalized_dir.y += player_entity.get<Direction>().y * 0.5f;
 
                 bool is_local = true;
+
+                MsgSpawnBullet msg;
+                msg.damage    = { BASE_BULLET_DAMAGE };
+                msg.direction = normalized_dir;
+                msg.pos       = play_pos;
+                msg.range     = { BASE_BULLET_RANGE };
+                msg.speed     = { BASE_BULLET_SPEED };
+                send_data(msg, k_nSteamNetworkingSend_Unreliable);
+
                 create_bullet(ecs,
                     dbtf_name,
                     play_pos,
                     normalized_dir,
-                    BASE_BULLET_SPEED,
+                    Speed { BASE_BULLET_SPEED },
                     Damage { BASE_BULLET_DAMAGE },
                     Range { BASE_BULLET_RANGE },
                     is_local);
@@ -480,7 +493,7 @@ bool load_font()
     return true;
 }
 
-void create_bullet(flecs::world ecs, const char* texture_file_name, Position pos, Direction dir, float speed, Damage damage, Range range, bool isLocal)
+void create_bullet(flecs::world ecs, const char* texture_file_name, Position pos, Direction dir, Speed speed, Damage damage, Range range, bool isLocal)
 {
     int          tex_w {};
     int          tex_h {};
@@ -491,7 +504,7 @@ void create_bullet(flecs::world ecs, const char* texture_file_name, Position pos
         ecs.entity()
             .add<BulletTag>()
             .add<LocalBullet>()
-            .set<Speed>({ speed })
+            .set<Speed>(speed)
             .set<Texture>({ texture })
             .set<Position>(pos)
             .set<Direction>(dir)
@@ -505,7 +518,7 @@ void create_bullet(flecs::world ecs, const char* texture_file_name, Position pos
         ecs.entity()
             .add<BulletTag>()
             .add<Direction>()
-            .set<Speed>({ speed })
+            .set<Speed>(speed)
             .set<Texture>({ texture })
             .set<Position>(pos)
             .set<Direction>(dir)

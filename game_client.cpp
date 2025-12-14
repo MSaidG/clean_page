@@ -239,6 +239,20 @@ void GameClient::parse_incoming_messages()
 
     } break;
 
+    case MsgType::MsgSpawnBullet: {
+            if (header.size != sizeof(MsgSpawnBullet)) {
+                printt("Client received Invalid MsgSpawnBullet packet size\n");
+                break;
+            }
+
+            MsgSpawnBullet spawn_bullet_msg;
+            memcpy(&spawn_bullet_msg, payload, sizeof(spawn_bullet_msg));
+
+            on_players_spawn_bullet(spawn_bullet_msg);
+            // printt("Player '%d' position changed x: '%f' y: '%f'.\n",
+            //     spawn_bullet_msg.id, spawn_bullet_msg.position.x, spawn_bullet_msg.position.y);
+        } break;
+
     default:
         printt("Client received Unknown message type\n");
     }
